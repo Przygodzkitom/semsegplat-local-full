@@ -1,0 +1,73 @@
+services:
+  # MinIO S3-compatible storage
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"  # API port
+      - "9001:9001"  # Console port
+    environment:
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin123
+    volumes:
+      - minio-data:/data
+    command: server /data --console-address ":9001"
+    restart: unless-stopped
+
+  semseg-app:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    ports:
+      - "8501:8501"
+    environment:
+      - LABEL_STUDIO_URL=http://label-studio:8080
+      - LABEL_STUDIO_USERNAME=${LABEL_STUDIO_USERNAME:-admin@example.com}
+      - LABEL_STUDIO_PASSWORD=${LABEL_STUDIO_PASSWORD:-admin}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # MinIO configuration
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
+    volumes:
+      - ./models/checkpoints:/app/models/checkpoints
+      - ./models/saved_models:/app/models/saved_models
+    # GPU passthrough - conditional runtime configuration
+    # Uncomment the line below ONLY if you have NVIDIA Docker runtime installed
+    # and want to use GPU acceleration. The app will automatically detect GPU
+    # availability and fall back to CPU if no GPU is available.
+    # runtime: nvidia  # Enable GPU passthrough (optional)
+    depends_on:
+      - label-studio
+      - minio
+    restart: unless-stopped
+
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    ports:
+      - "8080:8080"
+    environment:
+      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
+      - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+      # MinIO configuration for Label Studio
+      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin123
+      - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
+    command: label-studio start --username admin@example.com --password admin
+    volumes:
+      - label-studio-data:/label-studio/data
+      - ./label-studio-data:/label-studio/data/backup  # Backup to local directory
+    depends_on:
+      - minio
+    restart: unless-stopped
+
+volumes:
+  label-studio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./label-studio-data
+  minio-data: 
