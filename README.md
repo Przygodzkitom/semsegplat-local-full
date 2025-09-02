@@ -20,6 +20,12 @@ This platform provides a complete workflow for semantic segmentation projects:
 - Python 3.10+ (for local development)
 - NVIDIA GPU (optional, for GPU acceleration)
 
+### ⚠️ CRITICAL: Read This First!
+
+**Before setting up, read the [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md) file!**
+
+This documents a critical bug where the trailing slash in export storage prefix (`annotations/` vs `annotations`) can prevent annotations from saving. This fix is essential for the platform to work correctly.
+
 ### Quick Deployment
 
 ```bash
@@ -72,6 +78,28 @@ semsegplat-full_local_version/
 
 ## 🔧 Configuration
 
+## 🚨 Troubleshooting
+
+### Common Issues
+
+#### "S3 endpoint domain: ." Error
+**Symptom**: Annotations cannot be saved in Label Studio  
+**Cause**: Trailing slash in export storage prefix  
+**Solution**: Change `annotations/` to `annotations` in export storage configuration  
+**Details**: See [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md)
+
+#### Annotations Not Saving
+**Symptom**: Clicking "Submit" in Label Studio shows errors  
+**Cause**: Export storage not properly configured  
+**Solution**: Verify export storage prefix format and project export settings  
+**Details**: See [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md)
+
+#### Export Storage "Not Found"
+**Symptom**: Project setup shows "No export storage found"  
+**Cause**: Storage configuration or project export settings issue  
+**Solution**: Check storage creation and project configuration  
+**Details**: See [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md)
+
 ### Environment Variables
 
 Create a `.env` file (optional):
@@ -94,6 +122,13 @@ NVIDIA_VISIBLE_DEVICES=all
 2. Login with `admin@example.com` / `admin`
 3. Create a new project
 4. Configure storage settings (see `LABEL_STUDIO_MINIO_SETTINGS.md`)
+
+#### 🚨 Critical Storage Configuration
+
+**Export Storage Prefix**: Must be `annotations` (NO trailing slash)  
+**Source Storage Prefix**: Can be `images/` (trailing slash OK)
+
+**Why**: The trailing slash in export storage prefix causes "S3 endpoint domain: ." errors and prevents annotations from saving. See [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md) for full details.
 
 ### MinIO Storage Structure
 

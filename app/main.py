@@ -5,12 +5,13 @@ import os
 import gc
 import numpy as np
 import cv2
+import json
+from pathlib import Path
 from models.config import ModelConfig
 from models.inferencer import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
 from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
-import json
 
 # Configure resource limits and memory management
 def configure_resource_limits():
@@ -43,6 +44,54 @@ def configure_resource_limits():
         return False
     return True
 
+def save_project_config(project_id, project_name, project_description=""):
+    """Save project configuration to persistent storage"""
+    try:
+        # Try to save to the project directory (mounted volume)
+        config_dir = Path("/app/project/config")
+        config_dir.mkdir(exist_ok=True)
+        
+        config_file = config_dir / "label_studio_project.json"
+        config_data = {
+            "project_id": project_id,
+            "project_name": project_name,
+            "project_description": project_description,
+            "created_at": str(Path().cwd()),
+            "last_updated": str(Path().cwd())
+        }
+        
+        with open(config_file, 'w') as f:
+            json.dump(config_data, f, indent=2)
+        
+        st.success(f"✅ Project configuration saved")
+        return True
+    except Exception as e:
+        st.error(f"❌ Failed to save project configuration: {str(e)}")
+        return False
+
+def load_project_config():
+    """Load project configuration from persistent storage"""
+    try:
+        # Try to load from the project directory (mounted volume)
+        config_file = Path("/app/project/config") / "label_studio_project.json"
+        
+        if config_file.exists():
+            with open(config_file, 'r') as f:
+                config_data = json.load(f)
+            
+            # Restore session state
+            st.session_state.label_studio_project_id = config_data.get("project_id")
+            st.session_state.label_studio_project_name = config_data.get("project_name")
+            st.session_state.label_studio_project_description = config_data.get("project_description")
+            
+            st.info(f"✅ Loaded existing project: {config_data.get('project_name')} (ID: {config_data.get('project_id')})")
+            return config_data
+        else:
+            return None
+    except Exception as e:
+        st.warning(f"⚠️ Could not load project configuration: {str(e)}")
+        return None
+
 # Initialize application with resource management
 if not configure_resource_limits():
     st.error("Failed to configure resource limits. Please restart the application.")
@@ -69,6 +118,88 @@ except Exception as e:
 
 st.title("Semantic Segmentation Platform")
 
+def ensure_minio_folders():
+    """Ensure required MinIO folders exist at startup"""
+    st.write("🔍 Starting MinIO folder check...")
+    
+    # Check if we've already done this in this session
+    if st.session_state.get('minio_folders_created', False):
+        st.info("✅ MinIO folders already verified in this session")
+        return True
+        
+    try:
+        st.write("📦 Importing boto3...")
+        import boto3
+        from botocore.exceptions import ClientError
+        st.write("✅ boto3 imported successfully")
+        
+        # Initialize MinIO client
+        st.write("🔌 Initializing MinIO client...")
+        s3_client = boto3.client(
+            's3',
+            endpoint_url='http://minio:9000',
+            aws_access_key_id='minioadmin',
+            aws_secret_access_key='minioadmin123',
+            region_name='us-east-1'
+        )
+        st.write("✅ MinIO client initialized")
+        
+        # Ensure bucket exists
+        bucket_created = False
+        st.write("🪣 Checking bucket existence...")
+        try:
+            s3_client.head_bucket(Bucket="segmentation-platform")
+            st.write("✅ Bucket exists")
+        except ClientError as e:
+            if e.response['Error']['Code'] == '404':
+                st.write("📦 Creating bucket...")
+                s3_client.create_bucket(Bucket="segmentation-platform")
+                bucket_created = True
+                st.write("✅ Bucket created")
+            else:
+                st.error(f"❌ Bucket error: {str(e)}")
+                return False
+        
+        # Ensure images folder exists
+        st.write("📁 Creating images/ folder...")
+        try:
+            s3_client.put_object(
+                Bucket="segmentation-platform",
+                Key="images/"
+            )
+            st.write("✅ images/ folder created")
+        except Exception as e:
+            st.error(f"❌ Could not create images/ folder: {str(e)}")
+            return False
+        
+                    # Ensure annotations folder exists
+            st.write("📁 Creating annotations/ folder...")
+            try:
+                s3_client.put_object(
+                    Bucket="segmentation-platform",
+                    Key="annotations/"
+                )
+                st.write("✅ annotations/ folder created")
+            except Exception as e:
+                st.error(f"❌ Could not create annotations/ folder: {str(e)}")
+                return False
+        
+        # Mark as completed
+        st.session_state.minio_folders_created = True
+        st.write("✅ Session state updated")
+        
+        if bucket_created:
+            st.success("✅ MinIO bucket and folders created successfully!")
+        else:
+            st.success("✅ MinIO folders verified successfully!")
+            
+        return True
+        
+    except Exception as e:
+        st.error(f"❌ Failed to ensure MinIO folders: {str(e)}")
+        st.write(f"🔍 Error details: {type(e).__name__}: {str(e)}")
+        return False
+
 def load_existing_images(bucket_name=None):
     """Load existing images from storage on startup"""
     storage_manager = get_storage_manager(bucket_name=bucket_name)
@@ -86,12 +217,27 @@ def load_existing_images(bucket_name=None):
 
 def main():
     
+    # Load existing project configuration on startup
+    if 'label_studio_project_id' not in st.session_state:
+        load_project_config()
+    
     # Initialize MinIO manager and load existing images
     if 'existing_images' not in st.session_state:
         st.session_state.existing_images = load_existing_images("segmentation-platform")
     
     # Sidebar - always show
     with st.sidebar:
+        # MinIO Status
+        st.subheader("🗄️ MinIO Status")
+        if st.button("🔄 Check MinIO Status", use_container_width=True):
+            ensure_minio_folders()
+        
+        # Show current status
+        if st.session_state.get('minio_folders_created', False):
+            st.success("✅ MinIO folders ready")
+        else:
+            st.warning("⚠️ MinIO folders not verified")
+        
         # Maintenance
         st.subheader("🧹 Maintenance")
         
@@ -140,11 +286,12 @@ def main():
     if st.session_state.current_step == "upload":
         st.header("Upload Images")
         
-        # Use root bucket for uploads
-        selected_upload_project = "root"
+        # Simple single-project approach - always upload to images/ folder
+        selected_upload_project = "main"
         image_prefix = "images/"
+        st.info(f"📁 Uploading to main project folder: {image_prefix}")
         
-        # Load existing images from root bucket
+        # Load existing images from main images folder
         def load_project_images():
             try:
                 import boto3
@@ -156,6 +303,7 @@ def main():
                     region_name='us-east-1'
                 )
                 
+                # Always look in the main images/ folder
                 response = s3_client.list_objects_v2(Bucket="segmentation-platform", Prefix="images/")
                 images = []
                 
@@ -215,12 +363,18 @@ def main():
                         timestamp = int(time.time() * 1000)
                         filename = f"{timestamp}_{file.name}"
                         
+                        # Debug: Show what we're trying to upload
+                        st.info(f"🔍 Attempting to upload: {filename} to bucket: segmentation-platform, key: {image_prefix}{filename}")
+                        
                         # Upload to root bucket
                         s3_client.upload_fileobj(
                             file,
                             "segmentation-platform",
                             f"{image_prefix}{filename}"
                         )
+                        
+                        # Debug: Verify upload succeeded
+                        st.info(f"✅ Upload completed for: {filename}")
                         
                         uploaded_to_storage.append(f"{image_prefix}{filename}")
                         
@@ -233,6 +387,18 @@ def main():
                 status_text.text("Upload complete!")
                 st.success(f"✅ Successfully uploaded {len(uploaded_to_storage)} images to project '{selected_upload_project}'")
                 
+                # Debug: Verify files actually exist in MinIO
+                st.info("🔍 Verifying uploads in MinIO...")
+                try:
+                    response = s3_client.list_objects_v2(Bucket="segmentation-platform", Prefix="images/")
+                    if 'Contents' in response:
+                        actual_files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
+                        st.info(f"📁 Found {len(actual_files)} files in MinIO: {actual_files}")
+                    else:
+                        st.warning("⚠️ No files found in MinIO after upload!")
+                except Exception as e:
+                    st.error(f"❌ Error verifying uploads: {str(e)}")
+                
                 # Clear the uploaded files to prevent re-upload
                 st.session_state.uploaded_files = uploaded_to_storage
                 
@@ -242,81 +408,283 @@ def main():
     elif st.session_state.current_step == "annotate":
         st.header("Annotate Images")
         
-        # Label Studio Setup Section
+        # Check if project is already configured
+        if 'label_studio_project_id' in st.session_state and st.session_state.label_studio_project_id:
+            project_id = st.session_state.label_studio_project_id
+            project_name = st.session_state.get('label_studio_project_name', 'Unknown')
+            
+            st.success(f"✅ Project Already Configured: {project_name} (ID: {project_id})")
+            
+            # Show project actions
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(
+                    f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" style="font-size:1.2em;font-weight:bold;">'
+                    '🌐 Open Project in Label Studio</a>',
+                    unsafe_allow_html=True
+                )
+            
+            with col2:
+                st.markdown(
+                    f'<a href="http://localhost:8080/projects/{project_id}/settings" target="_blank" style="font-size:1.1em;">'
+                    '⚙️ Project Settings</a>',
+                    unsafe_allow_html=True
+                )
+            
+            st.divider()
+            
+            # Reset project configuration option
+            st.subheader("🔄 Reset Project Configuration")
+            st.warning("⚠️ This will clear the current project configuration and allow you to set up a new project.")
+            
+            if st.button("🗑️ Reset and Start Fresh", type="secondary", use_container_width=True):
+                try:
+                    # Remove config file using full pathlib import
+                    import pathlib
+                    config_file = pathlib.Path("/app/project/config") / "label_studio_project.json"
+                    if config_file.exists():
+                        config_file.unlink()
+                        st.success("✅ Configuration file removed")
+                    
+                    # Clear session state
+                    if 'label_studio_project_id' in st.session_state:
+                        del st.session_state.label_studio_project_id
+                    if 'label_studio_project_name' in st.session_state:
+                        del st.session_state.label_studio_project_name
+                    if 'label_studio_project_description' in st.session_state:
+                        del st.session_state.label_studio_project_description
+                    
+                    st.success("✅ Project configuration reset! You can now set up a new project.")
+                    # Use the correct method for older Streamlit versions
+                    try:
+                        st.rerun()
+                    except AttributeError:
+                        # Fallback for older Streamlit versions
+                        st.experimental_rerun()
+                    
+                except Exception as e:
+                    st.error(f"❌ Failed to reset configuration: {str(e)}")
+                    st.error(f"Error details: {type(e).__name__}: {str(e)}")
+            
+            st.divider()
+            st.info("🎯 Your project is ready for annotation! Use the links above to access Label Studio.")
+            return
+        
+        # Label Studio Setup Section (only shown if no project is configured)
         st.subheader("🏷️ Label Studio Setup")
         
-        # Use root bucket for Label Studio
-        project_name = "root"
-        st.info(f"🎯 Using root bucket")
+        # Automatic Configuration Section
+        st.markdown("### 🚀 Automatic Configuration")
+        st.info("Use the automatic setup to create and configure Label Studio projects with MinIO storage!")
         
-        # Direct Link to Label Studio
-        st.markdown(
-            f'<a href="http://localhost:8080" target="_blank" style="font-size:1.2em;font-weight:bold;">'
-            '🌐 Open Label Studio for Annotation</a>',
-            unsafe_allow_html=True
+        # Project configuration - fixed values for simplicity
+        project_name = "semantic-segmentation"
+        project_description = "Automated semantic segmentation project with MinIO storage"
+        
+        # Token input section
+        st.markdown("### 🔑 Authentication")
+        st.info("To automatically configure Label Studio, you need to provide your personal access token.")
+        
+        # Instructions
+        with st.expander("📋 How to get your token", expanded=False):
+            st.markdown("""
+            **1️⃣ Open Label Studio:**
+            - 🌐 Go to: http://localhost:8080
+            - 👤 Login: admin@example.com / admin
+            
+            **2️⃣ Generate Token:**
+            - ⚙️ Click your username in top right → Account Settings
+            - 🔑 Look for "Access Tokens" or "API Tokens"
+            - ➕ Create new token with read/write permissions
+            - 📋 Copy the generated token
+            
+            **3️⃣ Paste Token Below:**
+            - 🔑 Paste your token in the field below
+            - 🚀 Click Auto-Setup to configure everything automatically
+            """)
+        
+        # Token input field
+        personal_access_token = st.text_input(
+            "Personal Access Token:",
+            type="password",
+            placeholder="Paste your Label Studio personal access token here",
+            help="This token will be used to automatically configure your Label Studio project"
         )
         
-        # Setup Instructions
-        st.markdown("### 📋 Setup Instructions")
+        # Auto-setup button (only enabled if token is provided)
+        if personal_access_token:
+            if st.button("Auto-Setup Label Studio Project", type="primary", use_container_width=True):
+                try:
+                    from app.label_studio.auto_config import LabelStudioAutoConfig
+                    
+                    # Initialize auto-config with the provided token
+                    auto_config = LabelStudioAutoConfig(base_url="http://label-studio:8080")
+                    auto_config.personal_access_token = personal_access_token
+                    
+                    # Run automatic setup
+                    with st.spinner("Setting up Label Studio project automatically..."):
+                        project_id = auto_config.auto_setup_project(project_name, project_description)
+                        
+                        if project_id:
+                            st.session_state.label_studio_project_id = project_id
+                            st.session_state.label_studio_project_name = project_name
+                            
+                            # Save project configuration to persistent storage
+                            save_project_config(project_id, project_name, project_description)
+                            
+                            st.success(f"Project setup complete! Project ID: {project_id}")
+                            
+                            # Show next steps
+                            st.markdown("### Next Steps")
+                            st.markdown("""
+                            **1. Access Your Project:**
+                            - Open: http://localhost:8080
+                            - Login: admin@example.com
+                            - Password: admin
+                            - Your project should be visible in the projects list
+                            
+                            **2. Customize Classes (Optional):**
+                            - Go to: Project Settings → Labeling Interface
+                            - Modify the label configuration to add your specific classes
+                            - Customize colors and labels as needed
+                            - Save changes
+                            
+                            **3. Start Annotating:**
+                            - Click on your project to open it
+                            - Use the brush tool to paint over objects
+                            - Assign labels to segmented regions
+                            - Annotations are automatically saved to MinIO
+                            
+                            **4. Export Annotations:**
+                            - Go to: Export → Export Annotations
+                            - Choose format: JSON or COCO
+                            - Annotations saved to: MinIO/annotations/
+                            """)
+                            
+                            # Direct link to project
+                            st.markdown(
+                                f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" style="font-size:1.2em;font-weight:bold;">'
+                                'Open Project in Label Studio</a>',
+                                unsafe_allow_html=True
+                            )
+                        else:
+                            st.error("Automatic setup failed. Check the logs above for details.")
+                            
+                except Exception as e:
+                    st.error(f"Error during automatic setup: {str(e)}")
+                    st.info("Make sure Label Studio is running and accessible at http://localhost:8080")
+        else:
+            st.warning("Please provide your personal access token to enable automatic setup.")
+            st.info("Follow the instructions above to get your token from Label Studio.")
         
-        st.markdown("""
-        **1️⃣ Access Label Studio:**
-        - 🌐 Open: http://localhost:8080
-        - 👤 Login: admin@example.com
-        - 🔑 Password: admin
+        # Project Status Section
+        st.markdown("### 📊 Project Status")
         
-        **2️⃣ Create New Project:**
-        - 📝 Project Name: """ + project_name + """
-        - 📄 Description: Semantic segmentation project for automated annotation
+        # Check if we have a project ID in session state
+        if 'label_studio_project_id' in st.session_state:
+            project_id = st.session_state.label_studio_project_id
+            project_name = st.session_state.get('label_studio_project_name', 'Unknown')
+            
+            st.success(f"✅ Active Project: {project_name} (ID: {project_id})")
+            
+            # Show project actions
+            col1, col2 = st.columns(2)
+            with col1:
+                st.markdown(
+                    f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" style="font-size:1.2em;font-weight:bold;">'
+                    '🌐 Open Project in Label Studio</a>',
+                    unsafe_allow_html=True
+                )
+            
+            with col2:
+                st.markdown(
+                    f'<a href="http://localhost:8080/projects/{project_id}/settings" target="_blank" style="font-size:1.1em;">'
+                    '⚙️ Project Settings</a>',
+                    unsafe_allow_html=True
+                )
+            
+            # Check project status
+            if st.button("🔄 Check Project Status", use_container_width=True):
+                try:
+                    from app.label_studio.auto_config import LabelStudioAutoConfig
+                    
+                    auto_config = LabelStudioAutoConfig(base_url="http://label-studio:8080")
+                    project_info = auto_config.get_project_info(project_id)
+                    
+                    if project_info:
+                        st.info(f"**Project Details:**")
+                        st.write(f"• Tasks: {project_info.get('task_number', 0)}")
+                        st.write(f"• Annotations: {project_info.get('total_annotations_number', 0)}")
+                        st.write(f"• Created: {project_info.get('created_at', 'Unknown')}")
+                        st.write(f"• Status: {'Active' if project_info.get('is_published', False) else 'Draft'}")
+                    else:
+                        st.warning("Could not fetch project information")
+                        
+                except Exception as e:
+                    st.error(f"❌ Error checking project status: {str(e)}")
         
-        **3️⃣ Configure Labeling Interface:**
-        - 🎨 Use the Label Studio GUI to define your classes
-        - 🏷️ Add labels that match your project requirements
-        - 📝 Background class is included by default
-        - 🔧 You can add multiple object classes as needed
+        # No message needed when no active project
         
-        **4️⃣ Configure Source Storage (Images):**
-        - 🔧 Go to: Settings → Cloud Storage → Add Source Storage
-        - 📋 Use these settings:
-          - Storage Type: Amazon S3
-          - Storage Title: Images Storage
-          - Bucket Name: segmentation-platform
-          - Bucket Prefix: images/
-          - Region Name: us-east-1
-          - S3 Endpoint: http://minio:9000
-          - Access Key ID: minioadmin
-          - Secret Access Key: minioadmin123
-          - Treat every bucket object as a source file: ✅ ON
-          - Recursive scan: ✅ ON
-          - Use pre-signed URLs: ❌ OFF
-        
-        **5️⃣ Configure Target Storage (Annotations):**
-        - 🔧 Go to: Settings → Cloud Storage → Add Target Storage
-        - 📋 Use these settings:
-          - Storage Type: Amazon S3
-          - Storage Title: Annotations Storage
-          - Bucket Name: segmentation-platform
-          - Bucket Prefix: annotations/
-          - Region Name: us-east-1
-          - S3 Endpoint: http://minio:9000
-          - Access Key ID: minioadmin
-          - Secret Access Key: minioadmin123
-          - Can delete objects from storage: ❌ OFF (recommended)
-        
-        **6️⃣ Sync Storage:**
-        - 🔄 Click 'Sync' button on both source and target storage
-        - 📥 This will import images from MinIO into your project
-        
-        **7️⃣ Start Annotating:**
-        - 🎯 Go to: Labeling Interface
-        - 🖱️ Use polygon tool to draw around objects
-        - 🏷️ Assign labels based on your defined classes
-        
-        **8️⃣ Export Annotations:**
-        - 📤 Go to: Export → Export Annotations
-        - 💾 Choose format: JSON or COCO
-        - 📁 Annotations will be saved to MinIO in annotations/ folder
-        """)
+        # Manual Setup Section (collapsed by default)
+        with st.expander("📋 Manual Setup Instructions (Alternative)", expanded=False):
+            st.markdown("""
+            **1️⃣ Access Label Studio:**
+            - 🌐 Open: http://localhost:8080
+            - 👤 Login: admin@example.com
+            - 🔑 Password: admin
+            
+            **2️⃣ Create New Project:**
+            - 📝 Project Name: """ + project_name + """
+            - 📄 Description: Semantic segmentation project for automated annotation
+            
+            **3️⃣ Configure Labeling Interface:**
+            - 🎨 Use the Label Studio GUI to define your classes
+            - 🏷️ Add labels that match your project requirements
+            - 📝 Background class is included by default
+            - 🔧 You can add multiple object classes as needed
+            
+            **4️⃣ Configure Source Storage (Images):**
+            - 🔧 Go to: Settings → Cloud Storage → Add Source Storage
+            - 📋 Use these settings:
+              - Storage Type: Amazon S3
+              - Storage Title: Images Storage
+              - Bucket Name: segmentation-platform
+              - Bucket Prefix: images/
+              - Region Name: us-east-1
+              - S3 Endpoint: http://minio:9000
+              - Access Key ID: minioadmin
+              - Secret Access Key: minioadmin123
+              - Treat every bucket object as a source file: ✅ ON
+              - Recursive scan: ✅ ON
+              - Use pre-signed URLs: ❌ OFF
+            
+            **5️⃣ Configure Target Storage (Annotations):**
+            - 🔧 Go to: Settings → Cloud Storage → Add Target Storage
+            - 📋 Use these settings:
+              - Storage Type: Amazon S3
+              - Storage Title: Annotations Storage
+              - Bucket Name: segmentation-platform
+              - Bucket Prefix: annotations/
+              - Region Name: us-east-1
+              - S3 Endpoint: http://minio:9000
+              - Access Key ID: minioadmin
+              - Secret Access Key: minioadmin123
+              - Can delete objects from storage: ❌ OFF (recommended)
+            
+            **6️⃣ Sync Storage:**
+            - 🔄 Click 'Sync' button on both source and target storage
+            - 📥 This will import images from MinIO into your project
+            
+            **7️⃣ Start Annotating:**
+            - 🎯 Go to: Labeling Interface
+            - 🖱️ Use polygon tool to draw around objects
+            - 🏷️ Assign labels based on your defined classes
+            
+            **8️⃣ Export Annotations:**
+            - 📤 Go to: Export → Export Annotations
+            - 💾 Choose format: JSON or COCO
+            - 📁 Annotations will be saved to MinIO in annotations/ folder
+            """)
         
         # Troubleshooting
         with st.expander("🔧 Troubleshooting"):
@@ -341,6 +709,12 @@ def main():
             - ✅ Check target storage configuration
             - ✅ Check MinIO permissions
             - ✅ Try manual export
+            
+            **❓ Auto-setup failed?**
+            - ✅ Check Label Studio is accessible at http://localhost:8080
+            - ✅ Check MinIO is running and accessible
+            - ✅ Check Docker containers are healthy
+            - ✅ Try manual setup as alternative
             """)
 
     elif st.session_state.current_step == "train":
@@ -370,6 +744,33 @@ def main():
         
         # Class Configuration Section
         st.subheader("📋 Class Configuration")
+        
+        # Check if there are any annotations to detect
+        try:
+            # Quick check for existing annotations
+            import boto3
+            s3_client = boto3.client(
+                's3',
+                endpoint_url='http://minio:9000',
+                aws_access_key_id='minioadmin',
+                aws_secret_access_key='minioadmin123',
+                region_name='us-east-1'
+            )
+            
+            response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=annotation_prefix)
+            has_annotations = 'Contents' in response and len([obj for obj in response['Contents'] if obj['Size'] > 0]) > 0
+            
+            if not has_annotations:
+                st.warning("⚠️ No annotations found in MinIO storage.")
+                st.info("📋 To use the training section:")
+                st.info("1. First create a Label Studio project in the Annotate section")
+                st.info("2. Upload some images to MinIO")
+                st.info("3. Create annotations in Label Studio")
+                st.info("4. Come back here to detect classes and train")
+                st.stop()
+                
+        except Exception as e:
+            st.warning(f"⚠️ Could not check for annotations: {str(e)}")
         
         # Detect classes from Label Studio
         if st.button("🔍 Detect Classes from Label Studio"):
@@ -822,3 +1223,4 @@ def main():
 if __name__ == "__main__":
     print("Starting application...")  # Debug print to console
     main()
+

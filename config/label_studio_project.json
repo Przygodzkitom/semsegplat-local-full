@@ -1,0 +1,7 @@
+{
+  "project_id": 1,
+  "project_name": "semantic-segmentation",
+  "project_description": "Automated semantic segmentation project with MinIO storage",
+  "created_at": "/app",
+  "last_updated": "/app"
+}
