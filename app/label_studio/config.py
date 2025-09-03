@@ -19,21 +19,21 @@ def verify_label_studio_connection():
         except:
             return False
             
-        # Check for API Key
-        if not os.getenv("LABEL_STUDIO_API_KEY"):
-            st.error("LABEL_STUDIO_API_KEY not found in .env file.")
-            return False
-
+        # Check for Personal Access Token (use the same as auto_config)
+        personal_access_token = os.getenv("LABEL_STUDIO_PERSONAL_ACCESS_TOKEN", "admin")
+        if personal_access_token == "admin":
+            st.warning("Using default admin token - this may not work for API calls")
+        
         try:
-            # Verify API key is valid by fetching projects
+            # Verify token is valid by fetching projects
             client = Client(
                 url="http://labelstudio:8080",
-                api_key=os.getenv("LABEL_STUDIO_API_KEY")
+                api_key=personal_access_token
             )
             client.get_projects()
             return True
         except Exception as e:
-            st.error(f"Failed to connect with API Key: {e}")
+            st.error(f"Failed to connect with Personal Access Token: {e}")
             return False
     except Exception as e:
         st.error(f"Connection verification error: {str(e)}")
@@ -60,14 +60,14 @@ def setup_minio_storage(bucket_name):
 def create_label_studio_project(project_name, class_names, bucket_name=None):
     """Create a Label Studio project with optional GCS storage"""
     try:
-        api_key = os.getenv("LABEL_STUDIO_API_KEY")
-        if not api_key:
-            raise ValueError("LABEL_STUDIO_API_KEY not set in environment.")
+        personal_access_token = os.getenv("LABEL_STUDIO_PERSONAL_ACCESS_TOKEN", "admin")
+        if personal_access_token == "admin":
+            st.warning("Using default admin token - this may not work for API calls")
             
         # Initialize client with token
         client = Client(
             url="http://labelstudio:8080",
-            api_key=api_key
+            api_key=personal_access_token
         )
         
         # Generate label config for semantic segmentation
@@ -153,13 +153,13 @@ def upload_to_gcs(file_data, bucket_name, destination_blob_name):
 def sync_images_to_label_studio(project_id, bucket_name):
     """Sync images from GCS to Label Studio project"""
     try:
-        api_key = os.getenv("LABEL_STUDIO_API_KEY")
-        if not api_key:
-            raise ValueError("LABEL_STUDIO_API_KEY not set in environment.")
+        personal_access_token = os.getenv("LABEL_STUDIO_PERSONAL_ACCESS_TOKEN", "admin")
+        if personal_access_token == "admin":
+            st.warning("Using default admin token - this may not work for API calls")
         
         client = Client(
             url="http://labelstudio:8080",
-            api_key=api_key
+            api_key=personal_access_token
         )
         
         project = client.get_project(project_id)
@@ -182,13 +182,13 @@ def sync_images_to_label_studio(project_id, bucket_name):
 def get_project_images(project_id):
     """Get list of images in a Label Studio project"""
     try:
-        api_key = os.getenv("LABEL_STUDIO_API_KEY")
-        if not api_key:
-            raise ValueError("LABEL_STUDIO_API_KEY not set in environment.")
+        personal_access_token = os.getenv("LABEL_STUDIO_PERSONAL_ACCESS_TOKEN", "admin")
+        if personal_access_token == "admin":
+            st.warning("Using default admin token - this may not work for API calls")
         
         client = Client(
             url="http://labelstudio:8080",
-            api_key=api_key
+            api_key=personal_access_token
         )
         
         project = client.get_project(project_id)

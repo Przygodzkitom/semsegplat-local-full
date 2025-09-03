@@ -23,6 +23,7 @@ services:
       - LABEL_STUDIO_URL=http://label-studio:8080
       - LABEL_STUDIO_USERNAME=${LABEL_STUDIO_USERNAME:-admin@example.com}
       - LABEL_STUDIO_PASSWORD=${LABEL_STUDIO_PASSWORD:-admin}
+      - LABEL_STUDIO_PERSONAL_ACCESS_TOKEN=${LABEL_STUDIO_PERSONAL_ACCESS_TOKEN:-admin}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
       # MinIO configuration
@@ -34,6 +35,7 @@ services:
       - ./models/checkpoints:/app/models/checkpoints
       - ./models/saved_models:/app/models/saved_models
       - .:/app/project
+      - ./app:/app/app
     # GPU passthrough - conditional runtime configuration
     # Uncomment the line below ONLY if you have NVIDIA Docker runtime installed
     # and want to use GPU acceleration. The app will automatically detect GPU

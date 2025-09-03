@@ -61,34 +61,6 @@ class LabelStudioAutoConfig:
             st.error(f"Authentication error: {str(e)}")
             return False
     
-    def authenticate_with_sdk(self) -> bool:
-        """Alternative authentication using Label Studio SDK"""
-        try:
-            from label_studio_sdk import Client
-            
-            st.info(f"🔗 Connecting to Label Studio using SDK at: {self.base_url}")
-            st.info(f"🔑 Using token: {self.personal_access_token[:10]}...")
-            
-            # Check if we have a valid token
-            if not self.personal_access_token or self.personal_access_token == "admin":
-                st.error("❌ No valid personal access token provided")
-                return False
-            
-            # Try to connect using the SDK (which handles authentication differently)
-            client = Client(
-                url=self.base_url,
-                api_key=self.personal_access_token
-            )
-            
-            # Test connection by getting projects
-            projects = client.get_projects()
-            st.success("✅ SDK authentication successful!")
-            return True
-            
-        except Exception as e:
-            st.error(f"SDK authentication error: {str(e)}")
-            return False
-    
     def _refresh_access_token(self) -> bool:
         """Refresh access token using refresh token"""
         try:
@@ -133,6 +105,34 @@ class LabelStudioAutoConfig:
             return True
         except Exception:
             return self._refresh_access_token()
+    
+    def authenticate_with_sdk(self) -> bool:
+        """Alternative authentication using Label Studio SDK"""
+        try:
+            from label_studio_sdk import Client
+            
+            st.info(f"🔗 Connecting to Label Studio using SDK at: {self.base_url}")
+            st.info(f"🔑 Using token: {self.personal_access_token[:10]}...")
+            
+            # Check if we have a valid token
+            if not self.personal_access_token or self.personal_access_token == "admin":
+                st.error("❌ No valid personal access token provided")
+                return False
+            
+            # Try to connect using the SDK (which handles authentication differently)
+            client = Client(
+                url=self.base_url,
+                api_key=self.personal_access_token
+            )
+            
+            # Test connection by getting projects
+            projects = client.get_projects()
+            st.success("✅ SDK authentication successful!")
+            return True
+            
+        except Exception as e:
+            st.error(f"SDK authentication error: {str(e)}")
+            return False
     
     def create_project(self, project_name: str, description: str = "") -> Optional[int]:
         """Create a new Label Studio project"""
@@ -223,6 +223,9 @@ class LabelStudioAutoConfig:
         except Exception as e:
             st.error(f"Error configuring MinIO storage: {str(e)}")
             return False
+
+    # Annotation type detection removed - user configures directly in Label Studio
+    # No need for complex API calls or token authentication
     
     def _ensure_minio_bucket(self) -> bool:
         """Ensure MinIO bucket exists, create if it doesn't"""
@@ -413,7 +416,8 @@ class LabelStudioAutoConfig:
     
     def list_projects(self) -> List[Dict]:
         """List all projects"""
-        if not self._ensure_valid_token():
+        # Ensure we're authenticated before listing projects
+        if not self.authenticate():
             return []
         
         try:
@@ -495,6 +499,9 @@ class LabelStudioAutoConfig:
     def _find_existing_project(self, project_name: str) -> Optional[Dict]:
         """Find existing project by name"""
         try:
+            if not self._ensure_valid_token():
+                return None
+            
             projects = self.list_projects()
             for project in projects:
                 if project.get("title") == project_name:
@@ -506,6 +513,9 @@ class LabelStudioAutoConfig:
     def _check_storage_configuration(self, project_id: int) -> bool:
         """Check if project has storage configured"""
         try:
+            if not self._ensure_valid_token():
+                return False
+            
             project_info = self.get_project_info(project_id)
             if not project_info:
                 return False

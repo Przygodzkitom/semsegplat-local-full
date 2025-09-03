@@ -24,6 +24,9 @@ class TrainingService:
         self.bucket_name = bucket_name
         self.annotation_prefix = annotation_prefix
         
+    # Annotation type is configured directly in Label Studio
+    # No need to read from config file
+        
     def start_training(self):
         """Start training in a separate process with proper isolation"""
         print(f"🔍 DEBUG: start_training() called with bucket_name='{self.bucket_name}', annotation_prefix='{self.annotation_prefix}'")
@@ -49,12 +52,16 @@ class TrainingService:
             env['BUCKET_NAME'] = self.bucket_name
             env['ANNOTATION_PREFIX'] = self.annotation_prefix
             
+            # Use the standard training script (handles all annotation types)
+            training_script = "/app/models/training.py"
+            print(f"🔍 DEBUG: Using training script: {training_script}")
+            
             print(f"🔍 DEBUG: Environment variables set - BUCKET_NAME='{env.get('BUCKET_NAME')}', ANNOTATION_PREFIX='{env.get('ANNOTATION_PREFIX')}'")
-            print(f"🔍 DEBUG: Starting subprocess with command: {sys.executable} /app/models/training.py")
+            print(f"🔍 DEBUG: Starting subprocess with command: {sys.executable} {training_script}")
             
             # Start training process with proper isolation
             self.training_process = subprocess.Popen(
-                [sys.executable, "/app/models/training.py"],
+                [sys.executable, training_script],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 universal_newlines=True,
@@ -126,7 +133,8 @@ class TrainingService:
         """Detect if there's a training process running and reconnect to it"""
         try:
             import subprocess
-            result = subprocess.run(['pgrep', '-f', 'training.py'], capture_output=True, text=True)
+            # Check for any training process (both polygon and brush)
+            result = subprocess.run(['pgrep', '-f', 'training'], capture_output=True, text=True)
             if result.returncode == 0:
                 # There's a training process running
                 self.is_running = True

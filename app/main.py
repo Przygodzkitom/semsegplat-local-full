@@ -6,12 +6,14 @@ import gc
 import numpy as np
 import cv2
 import json
+import time
 from pathlib import Path
 from models.config import ModelConfig
 from models.inferencer import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
 from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
+from app.image_utils import process_uploaded_images, get_supported_formats, format_file_size, estimate_conversion_time
 
 # Configure resource limits and memory management
 def configure_resource_limits():
@@ -74,6 +76,10 @@ def load_project_config():
     try:
         # Try to load from the project directory (mounted volume)
         config_file = Path("/app/project/config") / "label_studio_project.json"
+        
+        # Fallback to local config directory if mounted volume doesn't exist
+        if not config_file.exists():
+            config_file = Path("config") / "label_studio_project.json"
         
         if config_file.exists():
             with open(config_file, 'r') as f:
@@ -200,6 +206,137 @@ def ensure_minio_folders():
         st.write(f"🔍 Error details: {type(e).__name__}: {str(e)}")
         return False
 
+def _clean_minio_storage():
+    """Clear all data from MinIO storage"""
+    try:
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        s3_client = boto3.client(
+            's3',
+            endpoint_url='http://minio:9000',
+            aws_access_key_id='minioadmin',
+            aws_secret_access_key='minioadmin123',
+            region_name='us-east-1'
+        )
+        
+        bucket_name = 'segmentation-platform'
+        
+        # List all objects in the bucket
+        try:
+            response = s3_client.list_objects_v2(Bucket=bucket_name)
+            if 'Contents' in response:
+                objects = [obj['Key'] for obj in response['Contents']]
+                
+                # Delete all objects
+                for obj_key in objects:
+                    s3_client.delete_object(Bucket=bucket_name, Key=obj_key)
+                
+                st.success(f"✅ Deleted {len(objects)} objects from MinIO")
+            else:
+                st.info("ℹ️ MinIO bucket is already empty")
+                
+        except Exception as e:
+            st.warning(f"⚠️ Could not clear MinIO: {str(e)}")
+            
+    except Exception as e:
+        st.error(f"❌ Error clearing MinIO storage: {str(e)}")
+
+def _clean_label_studio_database():
+    """Clear Label Studio SQLite database and restart container"""
+    try:
+        st.info("🔄 Stopping Label Studio container...")
+        result = subprocess.run(
+            ["docker", "compose", "stop", "label-studio"], 
+            capture_output=True, 
+            text=True
+        )
+        if result.returncode == 0:
+            st.success("✅ Label Studio container stopped")
+        else:
+            st.warning(f"⚠️ Could not stop container: {result.stderr}")
+        
+        # Delete the database file
+        db_path = "label-studio-data/label_studio.sqlite3"
+        if os.path.exists(db_path):
+            os.remove(db_path)
+            st.success("✅ Label Studio database cleared")
+        else:
+            st.info("ℹ️ Label Studio database file not found")
+        
+        # Restart Label Studio container
+        st.info("🔄 Restarting Label Studio container...")
+        result = subprocess.run(
+            ["docker", "compose", "start", "label-studio"], 
+            capture_output=True, 
+            text=True
+        )
+        if result.returncode == 0:
+            st.success("✅ Label Studio container restarted")
+        else:
+            st.warning(f"⚠️ Could not restart container: {result.stderr}")
+            
+    except Exception as e:
+        st.error(f"❌ Error clearing Label Studio database: {str(e)}")
+
+def _clean_project_config():
+    """Clear saved project configuration"""
+    try:
+        config_paths = [
+            "config/label_studio_project.json",
+            "/app/project/config/label_studio_project.json"
+        ]
+        
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                os.remove(config_path)
+                st.success(f"✅ Project configuration cleared: {config_path}")
+                
+    except Exception as e:
+        st.error(f"❌ Error clearing project configuration: {str(e)}")
+
+def _clear_session_state():
+    """Clear all Streamlit session state"""
+    try:
+        # Clear all session state variables
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        
+        st.success("✅ Session state cleared")
+        
+    except Exception as e:
+        st.error(f"❌ Error clearing session state: {str(e)}")
+
+def _restart_all_containers():
+    """Restart all containers to ensure complete clean state"""
+    try:
+        st.info("🔄 Restarting all containers for complete clean state...")
+        
+        # Stop all containers
+        result = subprocess.run(
+            ["docker", "compose", "stop"], 
+            capture_output=True, 
+            text=True
+        )
+        if result.returncode == 0:
+            st.success("✅ All containers stopped")
+        else:
+            st.warning(f"⚠️ Could not stop containers: {result.stderr}")
+        
+        # Start all containers
+        result = subprocess.run(
+            ["docker", "compose", "up", "-d"], 
+            capture_output=True, 
+            text=True
+        )
+        if result.returncode == 0:
+            st.success("✅ All containers started")
+        else:
+            st.warning(f"⚠️ Could not start containers: {result.stderr}")
+            
+    except Exception as e:
+        st.error(f"❌ Error restarting containers: {str(e)}")
+
 def load_existing_images(bucket_name=None):
     """Load existing images from storage on startup"""
     storage_manager = get_storage_manager(bucket_name=bucket_name)
@@ -224,6 +361,28 @@ def main():
     # Initialize MinIO manager and load existing images
     if 'existing_images' not in st.session_state:
         st.session_state.existing_images = load_existing_images("segmentation-platform")
+    
+        # ALWAYS SHOW PROJECT STATUS - AFTER PROJECT IS LOADED
+    st.markdown("### 📊 Project Status (Always Visible)")
+    st.write("🔍 DEBUG: Project Status section is being rendered!")
+    st.write("🔍 DEBUG: This should definitely be visible!")
+    
+    # Show session state info
+    if 'label_studio_project_id' in st.session_state:
+        project_id = st.session_state.label_studio_project_id
+        st.info(f"🔍 Debug: Project ID found: {project_id}")
+        st.success(f"✅ Active Project: {st.session_state.get('label_studio_project_name', 'Unknown')} (ID: {project_id})")
+        
+        # Annotation Type Configuration
+        st.info("📋 Configure your annotation type directly in Label Studio:")
+        st.info("1. Go to Project Settings → Labeling Interface")
+        st.info("2. Choose your preferred annotation type (Brush, Polygon, Rectangle, Circle)")
+        st.info("3. The training system will automatically handle your choice")
+    else:
+        st.info("🔍 Debug: No project ID in session state")
+    
+    # Annotation type is configured directly in Label Studio
+    # No need for complex detection or display logic
     
     # Sidebar - always show
     with st.sidebar:
@@ -254,7 +413,6 @@ def main():
                     
                     # Clean logs (keep last 7 days)
                     if Path("logs").exists():
-                        import time
                         current_time = time.time()
                         for log_file in Path("logs").glob("*.log"):
                             if current_time - log_file.stat().st_mtime > 7 * 24 * 3600:  # 7 days
@@ -264,6 +422,120 @@ def main():
                     
                 except Exception as e:
                     st.error(f"❌ Cleanup failed: {str(e)}")
+        
+        # Quick Reset for Testing
+        st.subheader("🧪 Quick Reset (Testing)")
+        st.info("Quick reset for testing - removes project config and session state:")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🧹 Quick Reset - Project Only", type="secondary", use_container_width=True):
+                try:
+                    _clean_project_config()
+                    _clear_session_state()
+                    st.success("✅ Quick reset completed!")
+                    st.info("🔄 Refreshing page...")
+                    time.sleep(1)
+                    st.experimental_rerun()
+                except Exception as e:
+                    st.error(f"❌ Quick reset failed: {str(e)}")
+        
+        # Container management
+        st.subheader("🐳 Container Management")
+        st.info("Manage Docker containers for testing:")
+        
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            if st.button("⏹️ Stop All", type="secondary", use_container_width=True):
+                try:
+                    result = subprocess.run(["docker", "compose", "stop"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        st.success("✅ All containers stopped")
+                    else:
+                        st.error(f"❌ Error stopping containers: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        with col2:
+            if st.button("▶️ Start All", type="secondary", use_container_width=True):
+                try:
+                    result = subprocess.run(["docker", "compose", "up", "-d"], capture_output=True, text=True)
+                    if result.returncode == 0:
+                        st.success("✅ All containers started")
+                    else:
+                        st.error(f"❌ Error starting containers: {result.stderr}")
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        with col3:
+            if st.button("🔄 Restart All", type="secondary", use_container_width=True):
+                try:
+                    _restart_all_containers()
+                except Exception as e:
+                    st.error(f"❌ Error: {str(e)}")
+        
+        st.divider()
+        
+        # Clean Slate - Reset Everything
+        st.subheader("🔄 Clean Slate (Reset Everything)")
+        st.warning("⚠️ **DANGER ZONE**: This will completely reset your entire system!")
+        st.info("Use this to start fresh for testing. This will delete:")
+        st.info("• All images in MinIO")
+        st.info("• All annotations in MinIO") 
+        st.info("• Label Studio database (all projects)")
+        st.info("• Saved project configuration")
+        st.info("• Current session state")
+        
+        # Use session state to track confirmation
+        if 'reset_confirmed' not in st.session_state:
+            st.session_state.reset_confirmed = False
+        
+        if not st.session_state.reset_confirmed:
+            if st.button("🗑️ RESET EVERYTHING - Clean Slate", type="secondary", use_container_width=True):
+                st.session_state.reset_confirmed = True
+                st.experimental_rerun()
+        else:
+            st.warning("⚠️ **FINAL WARNING**: This will delete ALL your data!")
+            st.info("Click the button below to confirm and proceed with the reset.")
+            
+            col1, col2 = st.columns(2)
+            with col1:
+                if st.button("✅ YES, RESET EVERYTHING", type="primary", use_container_width=True):
+                    with st.spinner("🧹 Performing complete system reset..."):
+                        try:
+                            # Step 1: Clear MinIO storage
+                            st.info("🗑️ Clearing MinIO storage...")
+                            _clean_minio_storage()
+                            
+                            # Step 2: Clear Label Studio database and restart container
+                            st.info("🗑️ Clearing Label Studio database...")
+                            _clean_label_studio_database()
+                            
+                            # Step 3: Clear project configuration
+                            st.info("🗑️ Clearing project configuration...")
+                            _clean_project_config()
+                            
+                            # Step 4: Clear session state
+                            st.info("🗑️ Clearing session state...")
+                            _clear_session_state()
+                            
+                            # Step 5: Restart all containers for complete clean state
+                            st.info("🔄 Restarting all containers...")
+                            _restart_all_containers()
+                            
+                            st.success("✅ Complete system reset successful!")
+                            st.info("🔄 Refreshing page in 5 seconds...")
+                            time.sleep(5)
+                            st.experimental_rerun()
+                            
+                        except Exception as e:
+                            st.error(f"❌ Reset failed: {str(e)}")
+                            st.info("🔍 Check the error details above")
+            
+            with col2:
+                if st.button("❌ CANCEL RESET", type="secondary", use_container_width=True):
+                    st.session_state.reset_confirmed = False
+                    st.experimental_rerun()
         
         st.divider()
         
@@ -324,8 +596,25 @@ def main():
         else:
             st.info(f"📁 No existing images found")
         
-        # File uploader
-        uploaded_files = st.file_uploader("Choose images", accept_multiple_files=True, type=['png', 'jpg', 'jpeg'])
+        # Enhanced file uploader with format detection and conversion
+        st.subheader("📁 Image Upload & Format Conversion")
+        
+        # Show supported formats
+        supported_formats = get_supported_formats()
+        st.info(f"🖼️ Supported formats: {', '.join(supported_formats).upper()}")
+        st.info("🔄 Non-PNG images will be automatically converted to PNG format for Label Studio compatibility")
+        
+        # File uploader with expanded format support
+        uploaded_files = st.file_uploader(
+            "Choose images", 
+            accept_multiple_files=True, 
+            type=supported_formats,
+            help="Upload images in any supported format. They will be converted to PNG if needed."
+        )
+        
+        # Add warning for large batches
+        if uploaded_files and len(uploaded_files) > 50:
+            st.warning(f"⚠️ **Large batch detected:** {len(uploaded_files)} files. Processing may take several minutes. Consider processing in smaller batches for better performance.")
         
         # Check if we already processed these files to prevent infinite loop
         if 'uploaded_files' in st.session_state and st.session_state.uploaded_files:
@@ -335,75 +624,147 @@ def main():
                 st.rerun()
         
         elif uploaded_files:
-            # Upload to project-specific location
-            try:
-                import boto3
-                s3_client = boto3.client(
-                    's3',
-                    endpoint_url='http://minio:9000',
-                    aws_access_key_id='minioadmin',
-                    aws_secret_access_key='minioadmin123',
-                    region_name='us-east-1'
-                )
+            # Process images: detect format and convert to PNG if needed
+            st.subheader("🔄 Processing Images")
+            
+            # Show file information
+            col1, col2 = st.columns(2)
+            with col1:
+                st.write(f"📊 **Total files:** {len(uploaded_files)}")
+                total_size = sum(file.size for file in uploaded_files)
+                st.write(f"📦 **Total size:** {format_file_size(total_size)}")
                 
-                # Upload progress
-                progress_bar = st.progress(0)
-                status_text = st.empty()
+                # Estimate conversion time
+                total_size_mb = total_size / (1024 * 1024)  # Convert to MB
+                estimated_time = estimate_conversion_time(len(uploaded_files), total_size_mb)
+                st.write(f"⏱️ **Est. conversion time:** {estimated_time}")
+            
+            with col2:
+                st.write(f"🖼️ **Format summary:**")
+                # Count formats to show summary instead of listing all files
+                format_counts = {}
                 
-                uploaded_to_storage = []
+                # Show progress for format detection
+                if len(uploaded_files) > 10:
+                    progress_text = st.empty()
+                    progress_bar = st.progress(0)
+                
                 for i, file in enumerate(uploaded_files):
-                    status_text.text(f"Uploading {file.name}...")
-                    
-                    try:
-                        # Reset file pointer
-                        file.seek(0)
-                        
-                        # Create unique filename with timestamp
-                        import time
-                        timestamp = int(time.time() * 1000)
-                        filename = f"{timestamp}_{file.name}"
-                        
-                        # Debug: Show what we're trying to upload
-                        st.info(f"🔍 Attempting to upload: {filename} to bucket: segmentation-platform, key: {image_prefix}{filename}")
-                        
-                        # Upload to root bucket
-                        s3_client.upload_fileobj(
-                            file,
-                            "segmentation-platform",
-                            f"{image_prefix}{filename}"
-                        )
-                        
-                        # Debug: Verify upload succeeded
-                        st.info(f"✅ Upload completed for: {filename}")
-                        
-                        uploaded_to_storage.append(f"{image_prefix}{filename}")
-                        
-                        # Update progress
+                    if len(uploaded_files) > 10:
+                        progress_text.text(f"Analyzing format of {file.name}...")
                         progress_bar.progress((i + 1) / len(uploaded_files))
-                        
-                    except Exception as e:
-                        st.error(f"Failed to upload {file.name}: {str(e)}")
+                    
+                    file.seek(0)
+                    try:
+                        from PIL import Image
+                        with Image.open(file) as img:
+                            format_name = img.format.upper() if img.format else 'UNKNOWN'
+                            format_counts[format_name] = format_counts.get(format_name, 0) + 1
+                    except:
+                        format_counts['UNKNOWN'] = format_counts.get('UNKNOWN', 0) + 1
+                    finally:
+                        file.seek(0)
                 
-                status_text.text("Upload complete!")
-                st.success(f"✅ Successfully uploaded {len(uploaded_to_storage)} images to project '{selected_upload_project}'")
+                # Clear progress indicators
+                if len(uploaded_files) > 10:
+                    progress_text.empty()
+                    progress_bar.empty()
                 
-                # Debug: Verify files actually exist in MinIO
-                st.info("🔍 Verifying uploads in MinIO...")
+                # Show format summary
+                for format_name, count in format_counts.items():
+                    st.write(f"• {format_name}: {count} files")
+            
+            # Process images for format conversion
+            if st.button("🔄 Process & Convert Images", type="primary"):
                 try:
-                    response = s3_client.list_objects_v2(Bucket="segmentation-platform", Prefix="images/")
-                    if 'Contents' in response:
-                        actual_files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
-                        st.info(f"📁 Found {len(actual_files)} files in MinIO: {actual_files}")
-                    else:
-                        st.warning("⚠️ No files found in MinIO after upload!")
+                    # Process uploaded images (detect format and convert if needed)
+                    processed_files = process_uploaded_images(uploaded_files)
+                    
+                    # Show conversion summary
+                    converted_count = sum(1 for _, _, _, was_converted in processed_files if was_converted)
+                    st.success(f"✅ Processing complete! {converted_count} images converted to PNG")
+                    
+                    # Show detailed conversion summary
+                    if converted_count > 0:
+                        st.subheader("📊 Conversion Summary")
+                        conversion_details = []
+                        for _, filename, original_format, was_converted in processed_files:
+                            if was_converted:
+                                conversion_details.append(f"• {filename}: {original_format} → PNG")
+                        
+                        for detail in conversion_details:
+                            st.write(detail)
+                    
+                    # Upload to project-specific location
+                    import boto3
+                    s3_client = boto3.client(
+                        's3',
+                        endpoint_url='http://minio:9000',
+                        aws_access_key_id='minioadmin',
+                        aws_secret_access_key='minioadmin123',
+                        region_name='us-east-1'
+                    )
+                    
+                    # Upload progress
+                    progress_bar = st.progress(0)
+                    status_text = st.empty()
+                    
+                    uploaded_to_storage = []
+                    for i, (file_data, filename, original_format, was_converted) in enumerate(processed_files):
+                        status_text.text(f"Uploading {filename}...")
+                        
+                        try:
+                            # Reset file pointer
+                            file_data.seek(0)
+                            
+                            # Create unique filename with timestamp
+                            timestamp = int(time.time() * 1000)
+                            final_filename = f"{timestamp}_{filename}"
+                            
+                            # Show upload info
+                            if was_converted:
+                                st.info(f"🔄 Uploading converted image: {filename} (was {original_format})")
+                            else:
+                                st.info(f"📤 Uploading original image: {filename} ({original_format})")
+                            
+                            # Upload to root bucket
+                            s3_client.upload_fileobj(
+                                file_data,
+                                "segmentation-platform",
+                                f"{image_prefix}{final_filename}"
+                            )
+                            
+                            # Debug: Verify upload succeeded
+                            st.success(f"✅ Upload completed for: {final_filename}")
+                            
+                            uploaded_to_storage.append(f"{image_prefix}{final_filename}")
+                            
+                            # Update progress
+                            progress_bar.progress((i + 1) / len(processed_files))
+                            
+                        except Exception as e:
+                            st.error(f"Failed to upload {filename}: {str(e)}")
+                    
+                    status_text.text("Upload complete!")
+                    st.success(f"✅ Successfully uploaded {len(uploaded_to_storage)} images to project '{selected_upload_project}'")
+                    
+                    # Debug: Verify files actually exist in MinIO
+                    st.info("🔍 Verifying uploads in MinIO...")
+                    try:
+                        response = s3_client.list_objects_v2(Bucket="segmentation-platform", Prefix="images/")
+                        if 'Contents' in response:
+                            actual_files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
+                            st.info(f"📁 Found {len(actual_files)} files in MinIO: {actual_files}")
+                        else:
+                            st.warning("⚠️ No files found in MinIO after upload!")
+                    except Exception as e:
+                        st.error(f"❌ Error verifying uploads: {str(e)}")
+                    
+                    # Clear the uploaded files to prevent re-upload
+                    st.session_state.uploaded_files = uploaded_to_storage
+                    
                 except Exception as e:
-                    st.error(f"❌ Error verifying uploads: {str(e)}")
-                
-                # Clear the uploaded files to prevent re-upload
-                st.session_state.uploaded_files = uploaded_to_storage
-                
-            except Exception as e:
-                st.error(f"❌ Upload failed: {str(e)}")
+                    st.error(f"❌ Processing/Upload failed: {str(e)}")
 
     elif st.session_state.current_step == "annotate":
         st.header("Annotate Images")
@@ -480,6 +841,8 @@ def main():
         # Project configuration - fixed values for simplicity
         project_name = "semantic-segmentation"
         project_description = "Automated semantic segmentation project with MinIO storage"
+        
+
         
         # Token input section
         st.markdown("### 🔑 Authentication")
@@ -579,6 +942,17 @@ def main():
         
         # Project Status Section
         st.markdown("### 📊 Project Status")
+        st.write("🔍 DEBUG: Project Status section is being rendered!")
+        st.write("🔍 DEBUG: This should definitely be visible!")
+        st.error("🔴 ERROR: This error message should definitely show!")
+        st.success("🟢 SUCCESS: This success message should definitely show!")
+        
+        # Debug: Always show session state info
+        st.info(f"🔍 Debug: Current session state keys: {list(st.session_state.keys())}")
+        if 'label_studio_project_id' in st.session_state:
+            st.info(f"🔍 Debug: Project ID found: {st.session_state.label_studio_project_id}")
+        else:
+            st.info("🔍 Debug: No project ID in session state")
         
         # Check if we have a project ID in session state
         if 'label_studio_project_id' in st.session_state:
@@ -586,6 +960,10 @@ def main():
             project_name = st.session_state.get('label_studio_project_name', 'Unknown')
             
             st.success(f"✅ Active Project: {project_name} (ID: {project_id})")
+            
+            # Debug: Show session state
+            st.info(f"🔍 Debug: Session state contains project_id: {project_id}")
+            st.info(f"🔍 Debug: Session state keys: {list(st.session_state.keys())}")
             
             # Show project actions
             col1, col2 = st.columns(2)
@@ -622,6 +1000,24 @@ def main():
                         
                 except Exception as e:
                     st.error(f"❌ Error checking project status: {str(e)}")
+            
+            # Annotation Type Configuration
+            st.markdown("### 🎨 Annotation Type")
+            st.info("""
+            **Current Setup**: Your project is configured with brush annotations by default.
+            
+            **To Change Annotation Type**:
+            1. 🌐 Open Label Studio: http://localhost:8080
+            2. ⚙️ Go to Project Settings → Labeling Interface
+            3. 🔄 Change the label configuration:
+               - **Brush**: `<BrushLabels>` - Paint over regions
+               - **Polygon**: `<PolygonLabels>` - Draw precise boundaries
+               - **Rectangle**: `<RectangleLabels>` - Draw bounding boxes
+               - **Circle**: `<CircleLabels>` - Draw circular regions
+            4. 💾 Save changes
+            
+            **Training**: The system will automatically handle your annotation type choice.
+            """)
         
         # No message needed when no active project
         
@@ -642,6 +1038,11 @@ def main():
             - 🏷️ Add labels that match your project requirements
             - 📝 Background class is included by default
             - 🔧 You can add multiple object classes as needed
+            - 🎯 **Choose Annotation Type**:
+              - **Brush**: `<BrushLabels>` - Paint over regions (default, good for semantic segmentation)
+              - **Polygon**: `<PolygonLabels>` - Draw precise boundaries (better for instance segmentation)
+              - **Rectangle**: `<RectangleLabels>` - Draw bounding boxes
+              - **Circle**: `<CircleLabels>` - Draw circular regions
             
             **4️⃣ Configure Source Storage (Images):**
             - 🔧 Go to: Settings → Cloud Storage → Add Source Storage
@@ -677,8 +1078,10 @@ def main():
             
             **7️⃣ Start Annotating:**
             - 🎯 Go to: Labeling Interface
-            - 🖱️ Use polygon tool to draw around objects
+            - 🖱️ Use your chosen annotation tool (brush, polygon, rectangle, or circle)
             - 🏷️ Assign labels based on your defined classes
+            - 💾 The system will automatically handle your annotation type choice
+            - 💡 **Tip**: The annotation type you chose will determine which training script is used
             
             **8️⃣ Export Annotations:**
             - 📤 Go to: Export → Export Annotations
@@ -734,7 +1137,6 @@ def main():
         # Import class detector
         try:
             import sys
-            import os
             sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'models', 'utils'))
             from class_detector import ClassDetector
             class_detector = ClassDetector(bucket_name, annotation_prefix)
@@ -851,7 +1253,6 @@ def main():
         # Import training service
         try:
             import sys
-            import os
             sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'models'))
             from training_service import TrainingService
             training_service = TrainingService(
@@ -984,7 +1385,6 @@ def main():
                     st.text("\n".join(st.session_state.training_log[-50:]))
             
             # Auto-refresh every 5 seconds (increased from 3)
-            import time
             time.sleep(5)
             st.experimental_rerun()
         
@@ -1002,9 +1402,6 @@ def main():
 
     elif st.session_state.current_step == "inference":
         st.header("Run Inference")
-
-        # Import os for file operations
-        import os
         
         # List available models first
         checkpoints_dir = "models/checkpoints"
