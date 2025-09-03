@@ -89,10 +89,7 @@ class MinIOProvider(StorageProvider):
                 else:
                     raise
             
-            if STREAMLIT_AVAILABLE:
-                st.success(f"✅ Connected to MinIO bucket: {self.bucket_name}")
-            else:
-                print(f"✅ Connected to MinIO bucket: {self.bucket_name}")
+
                 
         except Exception as e:
             error_msg = f"❌ Failed to connect to MinIO bucket '{self.bucket_name}': {str(e)}"
