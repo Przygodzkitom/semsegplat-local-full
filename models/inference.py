@@ -7,6 +7,46 @@ from models.config import ModelConfig
 import json
 from google.cloud import storage
 
+def _simple_rle_to_mask(rle_data, height, width):
+    """Convert RLE (Run Length Encoding) to binary mask - same logic as training script"""
+    try:
+        # LabelStudio uses a different RLE format - it's more like a compressed bitmap
+        # The format appears to be: [value, count, value, count, ...] where value is 0 or 1
+        mask = np.zeros(height * width, dtype=np.uint8)
+        
+        if isinstance(rle_data, list) and len(rle_data) > 0:
+            # Try different RLE formats
+            if len(rle_data) % 2 == 0:
+                # Standard RLE format [value, count, value, count, ...]
+                pos = 0
+                for i in range(0, len(rle_data), 2):
+                    value = rle_data[i]
+                    count = rle_data[i + 1]
+                    
+                    if pos + count <= len(mask):
+                        mask[pos:pos + count] = value
+                        pos += count
+                    else:
+                        break
+            else:
+                # Odd-length format - might be a different compression
+                # Try to interpret as [start, length, start, length, ...] but handle odd length
+                pos = 0
+                for i in range(0, len(rle_data) - 1, 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    
+                    if start + length <= len(mask):
+                        mask[start:start + length] = 1
+                    else:
+                        break
+        
+        return mask.reshape(height, width)
+        
+    except Exception as e:
+        print(f"Error converting RLE to mask: {e}")
+        return np.zeros((height, width), dtype=np.uint8)
+
 def load_class_configuration():
     """Load class configuration from file"""
     config_file = "/app/class_config.json"
@@ -70,13 +110,8 @@ def parse_labelstudio_annotation(annotation_data, class_names, target_size=(512,
                 brush_data = value.get('rle', [])
                 
                 if brush_data:
-                    # Convert RLE to mask
-                    rle_mask = np.zeros(target_height * target_width, dtype=np.uint8)
-                    for i in range(0, len(brush_data), 2):
-                        start = brush_data[i]
-                        length = brush_data[i + 1]
-                        rle_mask[start:start + length] = 1
-                    rle_mask = rle_mask.reshape(target_height, target_width)
+                    # Use the same improved RLE parsing as the training script
+                    rle_mask = _simple_rle_to_mask(brush_data, target_height, target_width)
                     
                     # Get class label
                     labels = value.get('brushlabels', [])

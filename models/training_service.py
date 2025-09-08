@@ -52,8 +52,8 @@ class TrainingService:
             env['BUCKET_NAME'] = self.bucket_name
             env['ANNOTATION_PREFIX'] = self.annotation_prefix
             
-            # Use the standard training script (handles all annotation types)
-            training_script = "/app/models/training.py"
+            # Detect annotation type and choose appropriate training script
+            training_script = self._detect_and_choose_training_script()
             print(f"🔍 DEBUG: Using training script: {training_script}")
             
             print(f"🔍 DEBUG: Environment variables set - BUCKET_NAME='{env.get('BUCKET_NAME')}', ANNOTATION_PREFIX='{env.get('ANNOTATION_PREFIX')}'")
@@ -279,6 +279,39 @@ class TrainingService:
                 f.write(f"{line}\n")
         except Exception as e:
             print(f"Error appending to log: {e}")
+    
+    def _detect_and_choose_training_script(self):
+        """Detect annotation type and choose appropriate training script"""
+        try:
+            # Import the annotation type detector
+            import sys
+            sys.path.append(os.path.join(os.path.dirname(__file__), 'utils'))
+            from annotation_type_detector import AnnotationTypeDetector
+            
+            # Detect annotation type
+            detector = AnnotationTypeDetector(self.bucket_name, self.annotation_prefix)
+            detection = detector.detect_annotation_type()
+            
+            print(f"🔍 DEBUG: Annotation type detection result: {detection}")
+            
+            # Choose training script based on detection
+            if detection['type'] == 'polygon':
+                training_script = "/app/models/training_polygon.py"
+                print(f"🎯 POLYGON annotations detected - using polygon training script")
+            elif detection['type'] == 'brush':
+                training_script = "/app/models/training_brush_minimal.py"
+                print(f"🎨 BRUSH annotations detected - using minimal brush training script")
+            else:
+                # Default to brush training script for mixed/unknown types
+                training_script = "/app/models/training_brush.py"
+                print(f"⚠️ Mixed/unknown annotation types detected - defaulting to brush training script")
+            
+            return training_script
+            
+        except Exception as e:
+            print(f"⚠️ Error detecting annotation type: {e}")
+            print(f"🔄 Falling back to original training script")
+            return "/app/models/training.py"
     
     def _clear_progress(self):
         """Clear previous progress files"""

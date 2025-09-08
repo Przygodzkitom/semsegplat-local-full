@@ -49,8 +49,8 @@ def configure_resource_limits():
 def save_project_config(project_id, project_name, project_description=""):
     """Save project configuration to persistent storage"""
     try:
-        # Try to save to the project config directory (works in both local and Docker)
-        config_dir = Path("/app/project/config")
+        # Save to local config directory (consistent location)
+        config_dir = Path("config")
         config_dir.mkdir(exist_ok=True)
         
         config_file = config_dir / "label_studio_project.json"
@@ -71,15 +71,51 @@ def save_project_config(project_id, project_name, project_description=""):
         st.error(f"❌ Failed to save project configuration: {str(e)}")
         return False
 
+def discover_all_config_files():
+    """Discover config files in the single designated location"""
+    config_locations = []
+    
+    # Single config location (works in both local and Docker)
+    config_paths = [
+        Path("config") / "label_studio_project.json",
+        Path("config") / "class_config.json"
+    ]
+    
+    for path in config_paths:
+        if path.exists():
+            try:
+                size = path.stat().st_size
+                config_locations.append({
+                    "path": str(path),
+                    "size": size,
+                    "exists": True
+                })
+            except:
+                pass
+    
+    return config_locations
+
+def clear_all_config_files():
+    """Clear all discovered config files"""
+    cleared_files = []
+    config_locations = discover_all_config_files()
+    
+    for config in config_locations:
+        try:
+            path = Path(config["path"])
+            if path.exists():
+                path.unlink()
+                cleared_files.append(str(path))
+        except Exception as e:
+            st.error(f"Failed to delete {config['path']}: {str(e)}")
+    
+    return cleared_files
+
 def load_project_config():
     """Load project configuration from persistent storage"""
     try:
-        # Try to load from the project config directory first (works in both local and Docker)
-        config_file = Path("/app/project/config") / "label_studio_project.json"
-        
-        # Fallback to local config directory if project path doesn't exist
-        if not config_file.exists():
-            config_file = Path("config") / "label_studio_project.json"
+        # Load from local config directory (consistent location)
+        config_file = Path("config") / "label_studio_project.json"
         
         if config_file.exists():
             with open(config_file, 'r') as f:
@@ -124,7 +160,6 @@ except Exception as e:
     st.error(f"Error importing local modules: {str(e)}")
 
 # ATI_Box Logo
-import os
 from pathlib import Path
 
 # Try to load logo image, fallback to text if not found
@@ -170,9 +205,244 @@ def load_existing_images(bucket_name=None):
 
 def main():
     
+    # Check for clean slate URL parameter (using st.experimental_get_query_params for older Streamlit)
+    try:
+        query_params = st.experimental_get_query_params()
+        if query_params.get("clean_slate") == ["true"]:
+            # Clear all session state
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.success("✅ Clean slate activated! Session state cleared.")
+            st.experimental_rerun()
+    except:
+        # If query params not available, skip this check
+        pass
+    
+    # Config Management Section
+    with st.expander("🔧 Config Management & Cleanup", expanded=False):
+        st.markdown("### 📁 Config File Discovery")
+        
+        # Discover all config files
+        config_files = discover_all_config_files()
+        
+        if config_files:
+            st.warning(f"Found {len(config_files)} config files:")
+            for config in config_files:
+                st.write(f"• `{config['path']}` ({config['size']} bytes)")
+        else:
+            st.success("✅ No config files found - clean slate!")
+        
+        st.markdown("### 🧹 Cleanup Options")
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🗑️ Clear Session State", key="clear_session"):
+                # Clear all session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.success("✅ Session state cleared! Refreshing...")
+                st.experimental_rerun()
+        
+        with col2:
+            if st.button("📁 Clear Config Files", key="clear_configs"):
+                cleared = clear_all_config_files()
+                if cleared:
+                    st.success(f"✅ Cleared {len(cleared)} config files:")
+                    for file in cleared:
+                        st.write(f"• `{file}`")
+                else:
+                    st.info("ℹ️ No config files to clear")
+                st.experimental_rerun()
+        
+        with col3:
+            if st.button("🧹 Complete Reset", key="complete_reset"):
+                # Clear session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                
+                # Clear config files
+                cleared = clear_all_config_files()
+                
+                st.success("✅ Complete reset performed!")
+                if cleared:
+                    st.write(f"Cleared {len(cleared)} config files")
+                st.experimental_rerun()
+        
+        # Add MinIO cleanup option
+        st.markdown("### 🗄️ MinIO Storage Cleanup")
+        st.warning("⚠️ This will remove all annotation files from MinIO (old project data)")
+        
+        if st.button("🗑️ Clear MinIO Annotations", key="clear_minio"):
+            try:
+                import boto3
+                s3_client = boto3.client(
+                    's3',
+                    endpoint_url='http://minio:9000',
+                    aws_access_key_id='minioadmin',
+                    aws_secret_access_key='minioadmin123',
+                    region_name='us-east-1'
+                )
+                
+                # List and delete annotation files
+                response = s3_client.list_objects_v2(Bucket='segmentation-platform', Prefix='annotations/')
+                deleted_count = 0
+                
+                if 'Contents' in response:
+                    for obj in response['Contents']:
+                        s3_client.delete_object(Bucket='segmentation-platform', Key=obj['Key'])
+                        deleted_count += 1
+                
+                st.success(f"✅ Cleared {deleted_count} annotation files from MinIO!")
+                st.experimental_rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error clearing MinIO: {str(e)}")
+        
+        # Add Label Studio Database cleanup option
+        st.markdown("### 🗃️ Label Studio Database Cleanup")
+        st.warning("⚠️ This will completely reset Label Studio by clearing the SQLite database")
+        st.info("This will remove all projects, users, and annotations from Label Studio")
+        
+        if st.button("🗑️ Clear Label Studio Database", key="clear_labelstudio_db"):
+            try:
+                import shutil
+                
+                st.info("🔄 Clearing Label Studio database and data...")
+                
+                # Clear the SQLite database
+                db_path = "label-studio-data/label_studio.sqlite3"
+                if os.path.exists(db_path):
+                    # Backup the database first
+                    backup_path = f"{db_path}.backup_{int(time.time())}"
+                    shutil.copy2(db_path, backup_path)
+                    st.info(f"📋 Database backed up to: {backup_path}")
+                    
+                    # Remove the database
+                    os.remove(db_path)
+                    st.success("✅ Label Studio database cleared!")
+                else:
+                    st.info("ℹ️ No database file found to clear")
+                
+                # Clear other Label Studio data
+                data_dirs = [
+                    "label-studio-data/export",
+                    "label-studio-data/media"
+                ]
+                
+                cleared_dirs = []
+                for data_dir in data_dirs:
+                    if os.path.exists(data_dir):
+                        shutil.rmtree(data_dir)
+                        os.makedirs(data_dir, exist_ok=True)
+                        cleared_dirs.append(data_dir)
+                
+                if cleared_dirs:
+                    st.success(f"✅ Cleared Label Studio data directories: {', '.join(cleared_dirs)}")
+                
+                st.warning("⚠️ **Important**: You need to restart the Label Studio container manually!")
+                st.info("Run this command on your host system:")
+                st.code("docker compose restart label-studio")
+                
+                st.success("🎉 Label Studio database cleared! Please restart the container to complete the reset.")
+                st.experimental_rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error clearing Label Studio database: {str(e)}")
+                import traceback
+                st.text(traceback.format_exc())
+        
+        # Add comprehensive cleanup option
+        st.markdown("### 🧹 Complete System Reset")
+        st.error("⚠️ **DANGER ZONE** - This will completely reset everything!")
+        st.warning("This will clear: Session state, Config files, MinIO data, AND Label Studio database")
+        
+        if st.button("💥 Complete System Reset", key="complete_system_reset"):
+            try:
+                # Clear session state
+                for key in list(st.session_state.keys()):
+                    del st.session_state[key]
+                st.info("✅ Session state cleared")
+                
+                # Clear config files
+                cleared = clear_all_config_files()
+                if cleared:
+                    st.info(f"✅ Cleared config files: {', '.join(cleared)}")
+                
+                # Clear MinIO
+                try:
+                    import boto3
+                    s3_client = boto3.client(
+                        's3',
+                        endpoint_url='http://minio:9000',
+                        aws_access_key_id='minioadmin',
+                        aws_secret_access_key='minioadmin123',
+                        region_name='us-east-1'
+                    )
+                    
+                    # Clear annotations
+                    response = s3_client.list_objects_v2(Bucket='segmentation-platform', Prefix='annotations/')
+                    deleted_count = 0
+                    if 'Contents' in response:
+                        for obj in response['Contents']:
+                            s3_client.delete_object(Bucket='segmentation-platform', Key=obj['Key'])
+                            deleted_count += 1
+                    st.info(f"✅ Cleared {deleted_count} MinIO annotation files")
+                except Exception as e:
+                    st.warning(f"⚠️ MinIO cleanup warning: {str(e)}")
+                
+                # Clear Label Studio database
+                try:
+                    import shutil
+                    
+                    # Clear database
+                    db_path = "label-studio-data/label_studio.sqlite3"
+                    if os.path.exists(db_path):
+                        backup_path = f"{db_path}.backup_{int(time.time())}"
+                        shutil.copy2(db_path, backup_path)
+                        os.remove(db_path)
+                        st.info("✅ Label Studio database cleared")
+                    
+                    # Clear data directories
+                    for data_dir in ["label-studio-data/export", "label-studio-data/media"]:
+                        if os.path.exists(data_dir):
+                            shutil.rmtree(data_dir)
+                            os.makedirs(data_dir, exist_ok=True)
+                    
+                    st.warning("⚠️ **Important**: You need to restart the Label Studio container manually!")
+                    st.info("Run this command on your host system:")
+                    st.code("docker compose restart label-studio")
+                    
+                except Exception as e:
+                    st.warning(f"⚠️ Label Studio cleanup warning: {str(e)}")
+                
+                st.success("🎉 Complete system reset performed!")
+                st.info("🔄 Refreshing page...")
+                time.sleep(2)
+                st.experimental_rerun()
+                
+            except Exception as e:
+                st.error(f"❌ Error during complete reset: {str(e)}")
+                import traceback
+                st.text(traceback.format_exc())
+        
+        st.markdown("### 📍 Config File Locations")
+        st.code("""
+Single Config Location (Simplified):
+• config/label_studio_project.json  - Project configuration
+• config/class_config.json          - Class configuration
+
+This location works in both local and Docker environments.
+        """)
+    
     # Load existing project configuration on startup
     if 'label_studio_project_id' not in st.session_state:
         load_project_config()
+    
+    # Debug: Show session state info
+    if 'label_studio_project_id' in st.session_state:
+        st.info(f"🔍 DEBUG: Session state has project ID: {st.session_state.label_studio_project_id}")
+        st.info(f"🔍 DEBUG: Session state has project name: {st.session_state.get('label_studio_project_name', 'None')}")
     
 
     
@@ -764,8 +1034,8 @@ def main():
             st.error(f"Error importing class detector: {str(e)}")
             st.stop()
         
-        # Class Configuration Section
-        st.subheader("📋 Class Configuration")
+        # Annotation Type Detection Section
+        st.subheader("🎨 Annotation Type Detection")
         
         # Check if there are any annotations to detect
         try:
@@ -794,8 +1064,107 @@ def main():
         except Exception as e:
             st.warning(f"⚠️ Could not check for annotations: {str(e)}")
         
-        # Detect classes from Label Studio
-        if st.button("🔍 Detect Classes from Label Studio"):
+        # Detect annotation type and classes
+        if st.button("🔍 Detect Annotation Type & Classes"):
+            with st.spinner("Detecting annotation type and classes..."):
+                try:
+                    # Import annotation type detector
+                    import sys
+                    sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'models', 'utils'))
+                    from annotation_type_detector import AnnotationTypeDetector
+                    
+                    # Detect annotation type
+                    detector = AnnotationTypeDetector(bucket_name, annotation_prefix)
+                    detection = detector.detect_annotation_type()
+                    recommendation = detector.get_recommended_class_config()
+                    
+                    st.session_state.annotation_detection = detection
+                    st.session_state.class_recommendation = recommendation
+                    
+                    # Display results
+                    st.success(f"✅ Annotation type detected!")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.metric("Annotation Type", detection['type'].title())
+                        st.metric("Sample Annotations", detection['sample_annotations'])
+                    
+                    with col2:
+                        st.metric("Background Handling", detection['background_handling'].title())
+                        st.metric("Classes Found", len(detection['class_names']))
+                    
+                    # Show detailed information
+                    with st.expander("📋 Detailed Detection Results", expanded=True):
+                        st.write(f"**Annotation Type:** {detection['type']}")
+                        st.write(f"**Background Handling:** {detection['background_handling']}")
+                        st.write(f"**Has Explicit Background:** {detection['has_explicit_background']}")
+                        st.write(f"**Classes Found:** {detection['class_names']}")
+                        st.write(f"**Recommendation:** {recommendation['recommendation']}")
+                        
+                        if detection['type'] == 'polygon':
+                            st.info("🎯 **Polygon Annotations Detected**")
+                            st.write("- Background is automatically class 0 (unlabeled areas)")
+                            st.write("- Training script will use polygon-specific handling")
+                        elif detection['type'] == 'brush':
+                            st.info("🎨 **Brush Annotations Detected**")
+                            if detection['has_explicit_background']:
+                                st.write("- Background is explicitly defined in annotations")
+                                st.write("- Training script will use brush-specific handling with explicit background")
+                            else:
+                                st.write("- No explicit background class found")
+                                st.write("- Training script will use brush-specific handling without background")
+                        else:
+                            st.warning("⚠️ **Mixed/Unknown Annotation Types**")
+                            st.write("- Multiple annotation types detected")
+                            st.write("- Training script will default to brush handling")
+                    
+                except Exception as e:
+                    st.error(f"Error detecting annotation type: {str(e)}")
+                    import traceback
+                    st.text(traceback.format_exc())
+        
+        # Class Configuration Section
+        st.subheader("📋 Class Configuration")
+        
+        # Show detected classes if available
+        if 'class_recommendation' in st.session_state:
+            recommendation = st.session_state.class_recommendation
+            
+            st.write("**Recommended Class Configuration:**")
+            st.write(f"Classes: {recommendation['class_names']}")
+            st.write(f"Annotation Type: {recommendation['annotation_type']}")
+            st.write(f"Background Handling: {recommendation['background_handling']}")
+            
+            # Allow user to edit class order
+            st.write("**Configure Classes for Training:**")
+            edited_classes = []
+            for i, class_name in enumerate(recommendation['class_names']):
+                new_name = st.text_input(f"  {i+1}. Class name:", value=class_name, key=f"class_{i}")
+                if new_name.strip():
+                    edited_classes.append(new_name.strip())
+                else:
+                    edited_classes.append(class_name)
+            
+            # Save class configuration
+            if st.button("💾 Save Class Configuration"):
+                try:
+                    config = {
+                        'class_names': edited_classes,
+                        'annotation_type': recommendation['annotation_type'],
+                        'background_handling': recommendation['background_handling'],
+                        'detection_result': st.session_state.annotation_detection
+                    }
+                    
+                    with open("/app/class_config.json", 'w') as f:
+                        json.dump(config, f, indent=2)
+                    
+                    st.session_state.class_config = config
+                    st.success("✅ Class configuration saved!")
+                except Exception as e:
+                    st.error(f"Error saving class configuration: {str(e)}")
+        
+        # Legacy class detection (fallback)
+        elif st.button("🔍 Detect Classes from Label Studio (Legacy)"):
             with st.spinner("Detecting classes from annotations..."):
                 try:
                     stats = class_detector.get_class_statistics()
@@ -854,8 +1223,25 @@ def main():
         with st.expander("📋 Training Configuration", expanded=False):
             if 'class_config' in st.session_state:
                 config = st.session_state.class_config
+                annotation_type = config.get('annotation_type', 'unknown')
+                background_handling = config.get('background_handling', 'unknown')
+                
                 st.write("**Model Architecture:** U-Net with ResNet101 backbone")
                 st.write(f"**Classes:** {' + '.join(config['class_names'])} ({len(config['class_names'])} classes)")
+                st.write(f"**Annotation Type:** {annotation_type.title()}")
+                st.write(f"**Background Handling:** {background_handling.title()}")
+                
+                # Show which training script will be used
+                if annotation_type == 'polygon':
+                    st.write("**Training Script:** Polygon-specific (background = class 0)")
+                elif annotation_type == 'brush':
+                    if background_handling == 'explicit':
+                        st.write("**Training Script:** Brush-specific (explicit background)")
+                    else:
+                        st.write("**Training Script:** Brush-specific (no background)")
+                else:
+                    st.write("**Training Script:** Brush-specific (default)")
+                
                 st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
                 st.write("**Training:** 100 epochs with validation (full training)")
                 st.write("**Disk Space:** Only saves final model (efficient)")
@@ -864,6 +1250,8 @@ def main():
             else:
                 st.write("**Model Architecture:** U-Net with ResNet101 backbone")
                 st.write("**Classes:** Not configured yet - detect classes first")
+                st.write("**Annotation Type:** Will be auto-detected")
+                st.write("**Training Script:** Will be auto-selected based on annotation type")
                 st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
                 st.write("**Training:** 100 epochs with validation (full training)")
                 st.write("**Disk Space:** Only saves final model (efficient)")
@@ -1050,7 +1438,37 @@ def main():
         
         # Create ModelConfig with the correct number of classes
         config = ModelConfig(num_classes=num_classes, class_names=class_names)
-        config.model_type = "resnet101"  # Match the training setup
+        
+        # Try to read encoder from model's config file
+        try:
+            config_file = model_path.replace('.pth', '_config.json')
+            if os.path.exists(config_file):
+                with open(config_file, 'r') as f:
+                    model_config = json.load(f)
+                if 'encoder_name' in model_config:
+                    config.encoder_name = model_config['encoder_name']
+                    print(f"Using encoder from model config: {config.encoder_name}")
+                else:
+                    # No encoder_name in config, use optimal encoder for current device
+                    from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+                    gpu_config = detect_gpu()
+                    optimal_config = get_optimal_model_config(gpu_config)
+                    config.encoder_name = optimal_config['encoder']
+                    print(f"No encoder_name in model config, using optimal encoder: {config.encoder_name}")
+            else:
+                # No config file, use optimal encoder for current device
+                from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+                gpu_config = detect_gpu()
+                optimal_config = get_optimal_model_config(gpu_config)
+                config.encoder_name = optimal_config['encoder']
+                print(f"No model config file found, using optimal encoder: {config.encoder_name}")
+        except Exception as e:
+            # Error reading config, use optimal encoder for current device
+            from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+            gpu_config = detect_gpu()
+            optimal_config = get_optimal_model_config(gpu_config)
+            config.encoder_name = optimal_config['encoder']
+            print(f"Error reading model config: {e}, using optimal encoder: {config.encoder_name}")
 
         # Initialize session state for threshold if not exists
         if 'threshold' not in st.session_state:
@@ -1076,7 +1494,38 @@ def main():
         def get_inferencer(model_path, num_classes, class_names, threshold):
             # Create config inside the cached function to ensure it's fresh
             _config = ModelConfig(num_classes=num_classes, class_names=class_names)
-            _config.model_type = "resnet101"
+            
+            # Try to read encoder from model's config file
+            try:
+                config_file = model_path.replace('.pth', '_config.json')
+                if os.path.exists(config_file):
+                    with open(config_file, 'r') as f:
+                        model_config = json.load(f)
+                    if 'encoder_name' in model_config:
+                        _config.encoder_name = model_config['encoder_name']
+                        print(f"Using encoder from model config: {_config.encoder_name}")
+                    else:
+                        # No encoder_name in config, use optimal encoder for current device
+                        from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+                        gpu_config = detect_gpu()
+                        optimal_config = get_optimal_model_config(gpu_config)
+                        _config.encoder_name = optimal_config['encoder']
+                        print(f"No encoder_name in model config, using optimal encoder: {_config.encoder_name}")
+                else:
+                    # No config file, use optimal encoder for current device
+                    from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+                    gpu_config = detect_gpu()
+                    optimal_config = get_optimal_model_config(gpu_config)
+                    _config.encoder_name = optimal_config['encoder']
+                    print(f"No model config file found, using optimal encoder: {_config.encoder_name}")
+            except Exception as e:
+                # Error reading config, use optimal encoder for current device
+                from models.utils.gpu_detector import detect_gpu, get_optimal_model_config
+                gpu_config = detect_gpu()
+                optimal_config = get_optimal_model_config(gpu_config)
+                _config.encoder_name = optimal_config['encoder']
+                print(f"Error reading model config: {e}, using optimal encoder: {_config.encoder_name}")
+            
             return Inferencer(model_path, _config, threshold=threshold)
 
         try:

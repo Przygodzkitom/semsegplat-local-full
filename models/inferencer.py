@@ -142,8 +142,16 @@ class Inferencer(BaseSegmentation):
         # Get optimal model configuration
         model_config = get_optimal_model_config(gpu_config)
         
-        # Load model with optimal configuration
-        self.model = smp.Unet(model_config['encoder'], classes=self.num_classes, activation=None)
+        # Check if config file specifies encoder (for compatibility with different training scripts)
+        encoder_name = model_config['encoder']  # Default to optimal encoder
+        if hasattr(config, 'encoder_name') and getattr(config, 'encoder_name', None):
+            encoder_name = config.encoder_name
+            print(f"Using encoder from config: {encoder_name}")
+        else:
+            print(f"Using optimal encoder: {encoder_name}")
+        
+        # Load model with correct encoder
+        self.model = smp.Unet(encoder_name, classes=self.num_classes, activation=None)
         self.model.load_state_dict(torch.load(model_path, map_location=self.device))
         self.model.to(self.device)
         self.model.eval()
