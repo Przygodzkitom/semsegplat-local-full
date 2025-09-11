@@ -684,4 +684,99 @@ class LabelStudioAutoConfig:
         except Exception as e:
             st.warning(f"⚠️ Export configuration failed: {str(e)}")
             return False
+    
+    def export_project_data(self, project_id: int, export_format: str = "JSON") -> Optional[str]:
+        """Export project data and save to local export directory"""
+        try:
+            if not self.authenticate():
+                st.error("❌ Failed to authenticate with Label Studio")
+                return None
+            
+            # Create export directory if it doesn't exist
+            export_dir = "label-studio-data/export/"
+            os.makedirs(export_dir, exist_ok=True)
+            
+            # Trigger export via API
+            export_url = f"{self.base_url}/api/projects/{project_id}/export"
+            export_params = {
+                "exportType": export_format,
+                "download_all_tasks": True
+            }
+            
+            st.info(f"🔄 Triggering export for project {project_id}...")
+            st.info(f"📤 Export URL: {export_url}")
+            st.info(f"📤 Export params: {export_params}")
+            
+            # Make the export request
+            response = self.session.get(export_url, params=export_params)
+            
+            if response.status_code == 200:
+                # Generate filename with timestamp
+                from datetime import datetime
+                timestamp = datetime.now().strftime("%Y-%m-%d-%H-%M")
+                filename = f"project-{project_id}-at-{timestamp}-{project_id:08x}.json"
+                filepath = os.path.join(export_dir, filename)
+                
+                # Save the export data
+                with open(filepath, 'w', encoding='utf-8') as f:
+                    f.write(response.text)
+                
+                st.success(f"✅ Export completed successfully!")
+                st.info(f"📁 Export saved to: {filepath}")
+                return filepath
+                
+            else:
+                st.error(f"❌ Export failed with status {response.status_code}")
+                st.error(f"Response: {response.text}")
+                return None
+                
+        except Exception as e:
+            st.error(f"❌ Export failed: {str(e)}")
+            return None
+    
+    def get_project_info(self, project_id: int) -> Optional[Dict]:
+        """Get project information including annotation count"""
+        try:
+            if not self.authenticate():
+                st.error("❌ Failed to authenticate with Label Studio")
+                return None
+            
+            # Get project details
+            project_url = f"{self.base_url}/api/projects/{project_id}/"
+            response = self.session.get(project_url)
+            
+            if response.status_code == 200:
+                project_data = response.json()
+                
+                # Get task count
+                tasks_url = f"{self.base_url}/api/projects/{project_id}/tasks/"
+                tasks_response = self.session.get(tasks_url)
+                
+                task_count = 0
+                annotated_count = 0
+                
+                if tasks_response.status_code == 200:
+                    tasks_data = tasks_response.json()
+                    task_count = tasks_data.get('count', 0)
+                    
+                    # Count annotated tasks
+                    for task in tasks_data.get('results', []):
+                        if task.get('annotations') and len(task['annotations']) > 0:
+                            annotated_count += 1
+                
+                return {
+                    'id': project_data.get('id'),
+                    'title': project_data.get('title'),
+                    'task_count': task_count,
+                    'annotated_count': annotated_count,
+                    'created_at': project_data.get('created_at'),
+                    'updated_at': project_data.get('updated_at')
+                }
+            else:
+                st.error(f"❌ Failed to get project info: {response.status_code}")
+                return None
+                
+        except Exception as e:
+            st.error(f"❌ Error getting project info: {str(e)}")
+            return None
 

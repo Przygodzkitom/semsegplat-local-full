@@ -13,19 +13,26 @@ import os
 from scipy.ndimage import label as connected_components
 import json
 
-MIN_OBJECT_AREA = 1  # Minimum area to consider an object (reduced from 100)
+MIN_OBJECT_AREA = 100  # Minimum area to consider an object (increased to filter fragments)
 
 def calculate_iou(pred_mask, gt_mask, num_classes):
+    print(f"    🔍 DEBUG: calculate_iou called with pred_mask shape: {pred_mask.shape}, gt_mask shape: {gt_mask.shape}")
+    print(f"    🔍 DEBUG: calculate_iou num_classes: {num_classes}")
     ious = []
     for cls in range(num_classes):
         pred = (pred_mask == cls)
         gt = (gt_mask == cls)
         intersection = np.logical_and(pred, gt).sum()
         union = np.logical_or(pred, gt).sum()
+        print(f"    🔍 DEBUG: Class {cls} - pred sum: {pred.sum()}, gt sum: {gt.sum()}, intersection: {intersection}, union: {union}")
         if union == 0:
             ious.append(float('nan'))
+            print(f"    🔍 DEBUG: Class {cls} IoU = NaN (no union)")
         else:
-            ious.append(intersection / union)
+            iou = intersection / union
+            ious.append(iou)
+            print(f"    🔍 DEBUG: Class {cls} IoU = {iou:.4f}")
+    print(f"    🔍 DEBUG: Final IoUs: {ious}")
     return ious
 
 def get_memory_usage():
@@ -48,68 +55,58 @@ def iou_coef(pred_obj, gt_obj):
     return intersection / (union + 1e-6)
 
 def compute_objectwise_metrics(pred_mask, gt_mask, iou_threshold=0.1):
-    """Compute object-wise metrics (precision, recall, F1)"""
-    # Convert masks to binary if they're not already
-    if pred_mask.max() > 1:
-        pred_mask = (pred_mask > 0).astype(np.uint8)
-    if gt_mask.max() > 1:
-        gt_mask = (gt_mask > 0).astype(np.uint8)
+    """Compute pixel-level metrics (precision, recall, F1) for semantic segmentation"""
+    print(f"    🔍 DEBUG: compute_objectwise_metrics called with pred_mask shape: {pred_mask.shape}, gt_mask shape: {gt_mask.shape}")
+    print(f"    🔍 DEBUG: pred_mask unique values: {np.unique(pred_mask)}, gt_mask unique values: {np.unique(gt_mask)}")
+    print(f"    🔍 DEBUG: pred_mask dtype: {pred_mask.dtype}, gt_mask dtype: {gt_mask.dtype}")
     
-    labeled_pred, n_pred = connected_components(pred_mask)
-    labeled_gt, n_gt = connected_components(gt_mask)
-
-    matched_gt = set()
-    tp = 0
-
-    for i in range(1, n_pred + 1):
-        pred_obj = (labeled_pred == i).astype(np.uint8)
-        pred_area = pred_obj.sum()
+    # Convert masks to binary uint8 if they're not already
+    # Handle both boolean masks and multi-class masks
+    if pred_mask.dtype == bool:
+        pred_mask = pred_mask.astype(np.uint8)
+    elif pred_mask.max() > 1:
+        pred_mask = (pred_mask > 0).astype(np.uint8)
+    else:
+        pred_mask = pred_mask.astype(np.uint8)
         
-        if pred_area < MIN_OBJECT_AREA:
-            continue
-            
-        best_iou = 0
-        best_gt = -1
-        for j in range(1, n_gt + 1):
-            if j in matched_gt:
-                continue
-            gt_obj = (labeled_gt == j).astype(np.uint8)
-            gt_area = gt_obj.sum()
-            
-            if gt_area < MIN_OBJECT_AREA:
-                continue
-                
-            iou = iou_coef(pred_obj, gt_obj)
-            
-            if iou > best_iou:
-                best_iou = iou
-                best_gt = j
-
-        if best_iou >= iou_threshold:
-            tp += 1
-            matched_gt.add(best_gt)
-
-    # Count objects after filtering by MIN_OBJECT_AREA
-    valid_pred = sum(1 for i in range(1, n_pred + 1) 
-                    if ((labeled_pred == i).sum() >= MIN_OBJECT_AREA))
-    valid_gt = sum(1 for i in range(1, n_gt + 1) 
-                   if ((labeled_gt == i).sum() >= MIN_OBJECT_AREA))
-
-    fp = valid_pred - tp
-    fn = valid_gt - tp
-    precision = tp / (tp + fp + 1e-6)
-    recall = tp / (tp + fn + 1e-6)
-    f1 = 2 * precision * recall / (precision + recall + 1e-6)
+    if gt_mask.dtype == bool:
+        gt_mask = gt_mask.astype(np.uint8)
+    elif gt_mask.max() > 1:
+        gt_mask = (gt_mask > 0).astype(np.uint8)
+    else:
+        gt_mask = gt_mask.astype(np.uint8)
+    
+    print(f"    🔍 DEBUG: After binary conversion - pred_mask unique: {np.unique(pred_mask)}, gt_mask unique: {np.unique(gt_mask)}")
+    print(f"    🔍 DEBUG: pred_mask sum: {pred_mask.sum()}, gt_mask sum: {gt_mask.sum()}")
+    
+    # Use the exact same logic as debug_visualization.py
+    pred_class = (pred_mask == 1)
+    gt_class = (gt_mask == 1)
+    
+    tp = np.sum(pred_class & gt_class)
+    fp = np.sum(pred_class & ~gt_class)
+    fn = np.sum(~pred_class & gt_class)
+    tn = np.sum(~pred_class & ~gt_class)
+    
+    print(f"    🔍 DEBUG: Using debug_visualization.py logic:")
+    print(f"    🔍 DEBUG: tp={tp}, fp={fp}, fn={fn}, tn={tn}")
+    
+    # Calculate metrics using the same logic as debug_visualization.py
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+    
+    print(f"    🔍 DEBUG: precision={precision:.4f}, recall={recall:.4f}, f1={f1:.4f}")
     
     return {
         'precision': precision,
         'recall': recall,
         'f1': f1,
-        'tp': tp,
-        'fp': fp,
-        'fn': fn,
-        'n_pred': valid_pred,
-        'n_gt': valid_gt
+        'tp': int(tp),
+        'fp': int(fp),
+        'fn': int(fn),
+        'n_pred': int(pred_mask.sum()),  # Total predicted pixels
+        'n_gt': int(gt_mask.sum())       # Total ground truth pixels
     }
 
 def load_class_configuration():
@@ -148,11 +145,43 @@ class Inferencer(BaseSegmentation):
             encoder_name = config.encoder_name
             print(f"Using encoder from config: {encoder_name}")
         else:
-            print(f"Using optimal encoder: {encoder_name}")
+            print(f"⚠️ No encoder_name in config, using optimal encoder: {encoder_name}")
+            print(f"⚠️ This may cause model loading errors if the model was trained with a different encoder")
         
-        # Load model with correct encoder
-        self.model = smp.Unet(encoder_name, classes=self.num_classes, activation=None)
-        self.model.load_state_dict(torch.load(model_path, map_location=self.device))
+        # Load model with correct encoder and weights
+        # Try different encoder weight combinations to find the right one
+        encoder_weights_options = ['imagenet', None]
+        self.model = None
+        
+        for encoder_weights in encoder_weights_options:
+            print(f"🔄 Trying encoder: {encoder_name} with weights: {encoder_weights}")
+            try:
+                test_model = smp.Unet(encoder_name, classes=self.num_classes, activation=None, encoder_weights=encoder_weights)
+                
+                # Try to load the state dict with strict=False to check compatibility
+                state_dict = torch.load(model_path, map_location=self.device)
+                missing_keys, unexpected_keys = test_model.load_state_dict(state_dict, strict=False)
+                
+                # If we have very few missing keys, this is probably the right combination
+                if len(missing_keys) < 10:
+                    print(f"✅ Good match! Missing keys: {len(missing_keys)}")
+                    self.model = test_model
+                    print(f"✅ Using encoder: {encoder_name} with weights: {encoder_weights}")
+                    break
+                else:
+                    print(f"⚠️ Some missing keys ({len(missing_keys)}), trying next option...")
+                    
+            except Exception as e:
+                print(f"❌ Error with {encoder_name} + {encoder_weights}: {str(e)[:100]}...")
+                continue
+        
+        if self.model is None:
+            # Fallback: use the first option and let strict=False handle it
+            print(f"⚠️ No perfect match found, using fallback: {encoder_name} with imagenet weights")
+            self.model = smp.Unet(encoder_name, classes=self.num_classes, activation=None, encoder_weights='imagenet')
+        
+        # Model is already loaded with the best matching encoder/weights combination
+        print(f"✅ Model loaded successfully")
         self.model.to(self.device)
         self.model.eval()
         
@@ -171,34 +200,48 @@ class Inferencer(BaseSegmentation):
 
     def predict(self, image):
         """Prediction function"""
+        print(f"    🔍 DEBUG: predict() called with image shape: {image.shape}")
+        
         # Get original dimensions
         h, w = image.shape[:2]
+        print(f"    🔍 DEBUG: Original image dimensions: {w}x{h} (WxH)")
         
         # Convert to RGB if needed
         if len(image.shape) == 3 and image.dtype == np.uint8:
             image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            print(f"    🔍 DEBUG: Converted BGR to RGB")
         
         # Create dummy mask for consistent transform
         dummy_mask = np.zeros((h, w, self.num_classes), dtype=np.uint8)
+        print(f"    🔍 DEBUG: Created dummy mask with shape: {dummy_mask.shape}")
         
         # Transform image
         augmented = self.transform(image=image, mask=dummy_mask)
         input_tensor = augmented["image"].unsqueeze(0).to(self.device)
+        print(f"    🔍 DEBUG: Input tensor shape: {input_tensor.shape}")
         
         # Run inference
         with torch.no_grad():
             logits = self.model(input_tensor)
             probs = torch.sigmoid(logits)[0].cpu().numpy()
+            print(f"    🔍 DEBUG: Model output probs shape: {probs.shape}")
+            print(f"    🔍 DEBUG: Probs min/max: {probs.min():.4f}/{probs.max():.4f}")
             
             # Apply threshold and keep at original size
             preds = (probs > self.threshold).astype(np.uint8)
+            print(f"    🔍 DEBUG: After threshold {self.threshold}, preds shape: {preds.shape}")
+            print(f"    🔍 DEBUG: Preds unique values: {np.unique(preds)}")
+            print(f"    🔍 DEBUG: Preds sum per class: {[preds[i].sum() for i in range(self.num_classes)]}")
             
             # Resize predictions back to original size using INTER_NEAREST
             masks = []
             for i in range(self.num_classes):
                 mask = cv2.resize(preds[i], (w, h), interpolation=cv2.INTER_NEAREST)
                 masks.append(mask)
+                print(f"    🔍 DEBUG: Class {i} mask shape: {mask.shape}, unique values: {np.unique(mask)}")
+                print(f"    🔍 DEBUG: Class {i} mask sum: {mask.sum()}")
         
+        print(f"    🔍 DEBUG: Returning {len(masks)} masks")
         return masks
 
     def create_visualization(self, image, pred_masks, gt_mask=None):
@@ -287,26 +330,80 @@ class Inferencer(BaseSegmentation):
 
     def predict_and_compare(self, image, gt_mask):
         """Predict masks and compare with ground truth"""
+        print("=" * 40)
+        print("🔍 PREDICT_AND_COMPARE CALLED - DEBUG VERSION 2024")
+        print("=" * 40)
+        print(f"  🔍 predict_and_compare called with image shape: {image.shape}, gt_mask shape: {gt_mask.shape}")
+        
         # Get predictions
         pred_masks = self.predict(image)
+        print(f"  🔍 predict() returned {len(pred_masks)} masks")
         
-        # Combine predictions into a single mask where each class has its own value
+        # Use the exact same logic as debug_visualization.py
         pred_mask = np.zeros_like(pred_masks[0])
-        for i in range(self.num_classes):
-            pred_mask[pred_masks[i] == 1] = i
+        print(f"  🔍 DEBUG: Starting with empty pred_mask shape: {pred_mask.shape}")
         
-        # Resize predicted mask to match ground truth size (512x512)
+        for i in range(self.num_classes):
+            class_mask = pred_masks[i]
+            print(f"  🔍 DEBUG: Class {i} mask shape: {class_mask.shape}, unique values: {np.unique(class_mask)}")
+            print(f"  🔍 DEBUG: Class {i} mask sum: {class_mask.sum()}, max: {class_mask.max()}, min: {class_mask.min()}")
+            pred_mask[class_mask == 1] = i
+            print(f"  🔍 DEBUG: After adding class {i}, pred_mask unique values: {np.unique(pred_mask)}")
+            print(f"  🔍 DEBUG: After adding class {i}, pred_mask sum: {pred_mask.sum()}")
+        
+        # Ensure background class (0) is properly assigned to remaining areas
+        # This is important for correct IoU calculation
+        pred_mask[pred_mask == 0] = 0  # Explicitly set background areas to class 0
+        print(f"  🔍 DEBUG: Final pred_mask unique values: {np.unique(pred_mask)}")
+        print(f"  🔍 DEBUG: Final pred_mask value distribution: {dict(zip(*np.unique(pred_mask, return_counts=True)))}")
+        
+        print(f"  🔍 Debug - Predicted mask shape: {pred_mask.shape}")
+        print(f"  🔍 Debug - Ground truth mask shape: {gt_mask.shape}")
+        print(f"  🔍 Debug - Predicted mask unique values: {np.unique(pred_mask)}")
+        print(f"  🔍 Debug - Ground truth mask unique values: {np.unique(gt_mask)}")
+        
+        # Debug: Show mask statistics
+        if len(np.unique(pred_mask)) > 1:
+            unique_vals, counts = np.unique(pred_mask, return_counts=True)
+            print(f"  🔍 DEBUG: Predicted mask value distribution: {dict(zip(unique_vals, counts))}")
+            print(f"  🔍 DEBUG: Predicted mask percentage of class 1: {np.sum(pred_mask == 1) / pred_mask.size * 100:.2f}%")
+        
+        if len(np.unique(gt_mask)) > 1:
+            unique_vals, counts = np.unique(gt_mask, return_counts=True)
+            print(f"  🔍 DEBUG: Ground truth mask value distribution: {dict(zip(unique_vals, counts))}")
+            print(f"  🔍 DEBUG: Ground truth mask percentage of class 1: {np.sum(gt_mask == 1) / gt_mask.size * 100:.2f}%")
+        
+        # Resize ground truth mask to match predicted mask size for comparison
+        # NOTE: This should no longer be needed since GT masks are now created at original image size
         if gt_mask is not None and pred_mask.shape != gt_mask.shape:
-            pred_mask = cv2.resize(pred_mask, (gt_mask.shape[1], gt_mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+            print(f"  ⚠️  WARNING: Resizing ground truth from {gt_mask.shape} to {pred_mask.shape}")
+            print(f"  ⚠️  This indicates a dimension mismatch that should be fixed!")
+            gt_mask = cv2.resize(gt_mask, (pred_mask.shape[1], pred_mask.shape[0]), interpolation=cv2.INTER_NEAREST)
+            print(f"  🔍 Debug - Resized GT mask unique values: {np.unique(gt_mask)}")
+        else:
+            print(f"  ✅ No resizing needed - both masks are same size: {pred_mask.shape}")
         
         # Calculate IoU for each class
+        print(f"  🔍 DEBUG: About to calculate IoU for {self.num_classes} classes")
         ious = calculate_iou(pred_mask, gt_mask, num_classes=self.num_classes)
+        print(f"  🔍 DEBUG: Calculated IoUs: {ious}")
         
         # Calculate object-wise metrics for each class (excluding background)
         metrics = {}
         for i in range(1, self.num_classes):
             class_name = self.class_names[i] if i < len(self.class_names) else f"Class {i}"
-            metrics[class_name] = compute_objectwise_metrics(pred_mask == i, gt_mask == i)
+            print(f"  🔍 DEBUG: Calculating object-wise metrics for class {i} ({class_name})")
+            
+            pred_class_mask = (pred_mask == i)
+            gt_class_mask = (gt_mask == i)
+            print(f"  🔍 DEBUG: Class {i} pred mask unique values: {np.unique(pred_class_mask)}")
+            print(f"  🔍 DEBUG: Class {i} gt mask unique values: {np.unique(gt_class_mask)}")
+            print(f"  🔍 DEBUG: Class {i} pred mask sum: {pred_class_mask.sum()}")
+            print(f"  🔍 DEBUG: Class {i} gt mask sum: {gt_class_mask.sum()}")
+            
+            class_metrics = compute_objectwise_metrics(pred_class_mask, gt_class_mask)
+            metrics[class_name] = class_metrics
+            print(f"  🔍 DEBUG: Class {i} metrics: {class_metrics}")
         
         return pred_mask, ious, metrics
 

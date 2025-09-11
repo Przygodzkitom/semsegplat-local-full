@@ -8,6 +8,10 @@ import cv2
 import json
 import time
 from pathlib import Path
+
+print("=" * 80)
+print("🚀 MAIN.PY LOADED - DEBUG VERSION 2024")
+print("=" * 80)
 from models.config import ModelConfig
 from models.inferencer import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
@@ -1398,6 +1402,9 @@ This location works in both local and Docker environments.
     elif st.session_state.current_step == "inference":
         st.header("Run Inference")
         
+        # Define bucket name for MinIO access
+        bucket_name = "segmentation-platform"
+        
         # List available models first
         checkpoints_dir = "models/checkpoints"
         model_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.pth')]
@@ -1555,16 +1562,39 @@ This location works in both local and Docker environments.
             uploaded_mask = st.file_uploader("Ground Truth Mask", type=["png", "jpg"], key="mask_uploader")
         elif gt_option == "Use Label Studio annotations":
             st.info("Will use annotations from storage for evaluation")
+            
             # Add batch evaluation option
             if st.button("🔍 Run Batch Evaluation on Label Studio Data"):
                 with st.spinner("Running batch evaluation on Label Studio annotations..."):
                     try:
-                        from models.inference import batch_evaluate_with_labelstudio
+                        from models.inference import batch_evaluate_with_labelstudio_export
+                        
+                        # Check if we have export files, if not, try to create a temporary one from MinIO
+                        export_file = None
+                        export_dir = "label-studio-data/export/"
+                        
+                        if os.path.exists(export_dir):
+                            export_files = [f for f in os.listdir(export_dir) if f.endswith('.json') and 'project-' in f]
+                            if export_files:
+                                # Use the most recent export file
+                                export_files.sort(reverse=True)
+                                export_file = os.path.join(export_dir, export_files[0])
+                                st.info(f"Using existing export file: {export_file}")
+                            else:
+                                st.info("No export files found, but annotations exist in MinIO storage")
+                                st.info("The batch evaluation will work with the existing MinIO annotations")
+                                # Create a dummy export file path - the function will handle MinIO data
+                                export_file = "minio://annotations"
+                        else:
+                            st.info("Export directory not found, using MinIO annotations directly")
+                            export_file = "minio://annotations"
                         
                         # Run batch evaluation
-                        results = batch_evaluate_with_labelstudio(
-                            image_dir="images/",
-                            annotation_dir="annotations/",  # Fixed annotation prefix
+                        print("=" * 60)
+                        print("🚀 ABOUT TO CALL BATCH_EVALUATE_WITH_LABELSTUDIO_EXPORT")
+                        print("=" * 60)
+                        results = batch_evaluate_with_labelstudio_export(
+                            export_file_path=export_file,
                             model_path=model_path,
                             bucket_name=bucket_name,
                             num_classes=num_classes,
@@ -1573,6 +1603,12 @@ This location works in both local and Docker environments.
                         
                         if results['status'] == 'success':
                             st.success("Batch evaluation completed!")
+                            
+                            # Display debug info if available
+                            if 'debug_info' in results and results['debug_info']:
+                                with st.expander("🔍 Debug Information", expanded=True):
+                                    for debug_line in results['debug_info']:
+                                        st.text(debug_line)
                             
                             # Display results in a nice format
                             st.subheader("📊 Batch Evaluation Results")

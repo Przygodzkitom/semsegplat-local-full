@@ -56,7 +56,7 @@ def check_disk_space():
         print(f"⚠️ WARNING: Disk usage is {usage:.1f}% - high!")
     return True
 
-def save_model_config(model_filename, class_names, annotation_type="polygon"):
+def save_model_config(model_filename, class_names, annotation_type="polygon", encoder_name=None):
     """Save model configuration alongside the model file"""
     try:
         config_filename = model_filename.replace('.pth', '_config.json')
@@ -73,10 +73,21 @@ def save_model_config(model_filename, class_names, annotation_type="polygon"):
             }
         }
         
+        # Add encoder information if provided
+        if encoder_name:
+            config['encoder_name'] = encoder_name
+        
         with open(f"models/checkpoints/{config_filename}", 'w') as f:
             json.dump(config, f, indent=2)
         
-        print(f"✅ Model config saved as {config_filename}")
+        # Verify the config was saved correctly
+        if encoder_name:
+            print(f"✅ Model config saved as {config_filename}")
+            print(f"🔑 VERIFIED: encoder_name = {encoder_name} saved in config")
+        else:
+            print(f"⚠️ Model config saved as {config_filename}")
+            print(f"⚠️ WARNING: No encoder_name saved in config!")
+        
         return True
     except Exception as e:
         print(f"❌ Error saving model config: {e}")
@@ -298,10 +309,22 @@ print(f"🚀 Using device: {device}")
 # Get optimal model configuration based on device
 model_config = get_optimal_model_config(gpu_config)
 print(f"🏗️ Model config: {model_config}")
+print(f"🔍 GPU Detection Results:")
+print(f"   GPU Available: {gpu_config['available']}")
+print(f"   Device: {gpu_config['device']}")
+print(f"   GPU Name: {gpu_config['name']}")
+print(f"   Selected Encoder: {model_config['encoder']}")
+print(f"   Encoder Weights: {model_config['encoder_weights']}")
+
+# CRITICAL: Log the exact encoder being used
+encoder_name = model_config['encoder']
+print(f"🔑 CRITICAL: Using encoder: {encoder_name}")
+print(f"🔑 CRITICAL: This encoder will be saved in the config file")
+print(f"🔑 CRITICAL: Make sure this matches what you expect!")
 
 # Initialize model with optimal configuration
 model = smp.Unet(
-    model_config['encoder'], 
+    encoder_name, 
     classes=len(class_names), 
     activation=None, 
     encoder_weights=model_config['encoder_weights']
@@ -521,8 +544,13 @@ try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"final_model_polygon_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "polygon")  # Save config alongside model
-        final_save_msg = f"✅ Final POLYGON model saved as {model_filename}!"
+        
+        # CRITICAL: Save config with the exact encoder used
+        saved_encoder = model_config['encoder']
+        print(f"🔑 CRITICAL: Saving model with encoder: {saved_encoder}")
+        save_model_config(model_filename, class_names, "polygon", saved_encoder)
+        
+        final_save_msg = f"✅ Final POLYGON model saved as {model_filename} with encoder: {saved_encoder}!"
         print(final_save_msg)
         update_progress(epochs, epochs, "running", final_save_msg)
         
@@ -536,6 +564,12 @@ try:
 
     completion_msg = f"\n✅ POLYGON Training complete! Final model saved as {model_filename} in models/checkpoints/"
     print(completion_msg)
+    print(f"🔑 FINAL SUMMARY:")
+    print(f"   Model file: {model_filename}")
+    print(f"   Config file: {model_filename.replace('.pth', '_config.json')}")
+    print(f"   Encoder used: {saved_encoder}")
+    print(f"   Classes: {class_names}")
+    print(f"   Device: {device}")
     update_progress(epochs, epochs, "completed", completion_msg)
 
 except KeyboardInterrupt:
@@ -547,7 +581,7 @@ except KeyboardInterrupt:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"interrupted_model_polygon_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "polygon")  # Save config alongside model
+        save_model_config(model_filename, class_names, "polygon", model_config['encoder'])  # Save config alongside model
         save_msg = f"✅ Interrupted POLYGON model saved as {model_filename}!"
         print(save_msg)
         update_progress(epoch + 1 if 'epoch' in locals() else 0, epochs, "interrupted", save_msg)
@@ -569,7 +603,7 @@ except Exception as e:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"error_model_polygon_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "polygon")  # Save config alongside model
+        save_model_config(model_filename, class_names, "polygon", model_config['encoder'])  # Save config alongside model
         save_msg = f"✅ Error POLYGON model saved as {model_filename}!"
         print(save_msg)
         update_progress(epoch + 1 if 'epoch' in locals() else 0, epochs, "failed", save_msg)

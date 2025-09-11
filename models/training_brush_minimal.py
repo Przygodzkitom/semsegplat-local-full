@@ -270,7 +270,7 @@ try:
             'num_classes': len(class_names),
             'model_filename': model_filename,
             'annotation_type': 'brush',
-            'encoder_name': model_config['encoder'],  # Add encoder information
+            'encoder_name': 'resnet18',  # Use the actual encoder used in training
             'created_at': datetime.now().isoformat(),
             'training_info': {
                 'bucket_name': BUCKET_NAME,
