@@ -7,13 +7,14 @@ import numpy as np
 import cv2
 import json
 import time
+import boto3
 from pathlib import Path
 
 print("=" * 80)
 print("🚀 MAIN.PY LOADED - DEBUG VERSION 2024")
 print("=" * 80)
 from models.config import ModelConfig
-from models.inferencer import Inferencer
+from models.inference_single import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
 from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
@@ -159,7 +160,7 @@ except Exception as e:
 # Try importing local modules
 try:
     from models.config import ModelConfig
-    from models.inferencer import Inferencer
+    from models.inference_single import Inferencer
 except Exception as e:
     st.error(f"Error importing local modules: {str(e)}")
 
@@ -222,23 +223,44 @@ def main():
         # If query params not available, skip this check
         pass
     
-    # Config Management Section
-    with st.expander("🔧 Config Management & Cleanup", expanded=False):
-        st.markdown("### 📁 Config File Discovery")
+    # Clean Slate Operations Section
+    with st.expander("🧹 Clean Slate Operations", expanded=False):
+        st.markdown("### 🎯 Complete System Reset")
+        st.info("For a true clean slate (removing all data, images, annotations, and project history), use the external cleanup script.")
         
-        # Discover all config files
-        config_files = discover_all_config_files()
+        st.markdown("#### 📋 Clean Slate Instructions")
+        st.code("""
+# Step 1: Stop all containers
+docker-compose down
+
+# Step 2: Run the comprehensive cleanup script
+python comprehensive_cleanup.py
+
+# Step 3: Restart containers
+docker-compose up -d
+        """, language="bash")
         
-        if config_files:
-            st.warning(f"Found {len(config_files)} config files:")
-            for config in config_files:
-                st.write(f"• `{config['path']}` ({config['size']} bytes)")
-        else:
-            st.success("✅ No config files found - clean slate!")
+        st.markdown("#### 🔧 Alternative Manual Cleanup")
+        st.code("""
+# Stop containers
+docker-compose down
+
+# Remove all volumes (destructive - removes all data)
+docker volume rm $(docker volume ls -q)
+
+# Remove local data directories
+rm -rf minio-data/ label-studio-data/
+
+# Restart containers
+docker-compose up -d
+        """, language="bash")
         
-        st.markdown("### 🧹 Cleanup Options")
+        st.warning("⚠️ **Warning**: Clean slate operations will remove ALL data including images, annotations, and trained models. This cannot be undone!")
         
-        col1, col2, col3 = st.columns(3)
+        st.markdown("#### 🧹 Local Cleanup (Limited Scope)")
+        st.caption("These options only clear local files and session state - they do NOT clear Docker volumes or persistent data.")
+        
+        col1, col2 = st.columns(2)
         
         with col1:
             if st.button("🗑️ Clear Session State", key="clear_session"):
@@ -249,195 +271,35 @@ def main():
                 st.experimental_rerun()
         
         with col2:
-            if st.button("📁 Clear Config Files", key="clear_configs"):
-                cleared = clear_all_config_files()
-                if cleared:
-                    st.success(f"✅ Cleared {len(cleared)} config files:")
-                    for file in cleared:
-                        st.write(f"• `{file}`")
-                else:
-                    st.info("ℹ️ No config files to clear")
-                st.experimental_rerun()
+            if st.button("🧹 Clear Debug Files", key="clear_debug"):
+                with st.spinner("Clearing debug files..."):
+                    try:
+                        debug_patterns = [
+                            "debug_*.png",
+                            "debug_*.jpg", 
+                            "debug_*.jpeg",
+                            "temp_*",
+                            "*.tmp"
+                        ]
+                        
+                        cleared_files = []
+                        for pattern in debug_patterns:
+                            for file in os.listdir("."):
+                                if file.startswith(pattern.split("*")[0]) and file.endswith(pattern.split("*")[1]):
+                                    if os.path.isfile(file):
+                                        os.remove(file)
+                                        cleared_files.append(file)
+                        
+                        if cleared_files:
+                            st.success(f"✅ Cleared debug files: {', '.join(cleared_files)}")
+                        else:
+                            st.info("ℹ️ No debug files to clear")
+                        
+                        st.experimental_rerun()
+                        
+                    except Exception as e:
+                        st.warning(f"⚠️ Error clearing debug files: {e}")
         
-        with col3:
-            if st.button("🧹 Complete Reset", key="complete_reset"):
-                # Clear session state
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                
-                # Clear config files
-                cleared = clear_all_config_files()
-                
-                st.success("✅ Complete reset performed!")
-                if cleared:
-                    st.write(f"Cleared {len(cleared)} config files")
-                st.experimental_rerun()
-        
-        # Add MinIO cleanup option
-        st.markdown("### 🗄️ MinIO Storage Cleanup")
-        st.warning("⚠️ This will remove all annotation files from MinIO (old project data)")
-        
-        if st.button("🗑️ Clear MinIO Annotations", key="clear_minio"):
-            try:
-                import boto3
-                s3_client = boto3.client(
-                    's3',
-                    endpoint_url='http://minio:9000',
-                    aws_access_key_id='minioadmin',
-                    aws_secret_access_key='minioadmin123',
-                    region_name='us-east-1'
-                )
-                
-                # List and delete annotation files
-                response = s3_client.list_objects_v2(Bucket='segmentation-platform', Prefix='annotations/')
-                deleted_count = 0
-                
-                if 'Contents' in response:
-                    for obj in response['Contents']:
-                        s3_client.delete_object(Bucket='segmentation-platform', Key=obj['Key'])
-                        deleted_count += 1
-                
-                st.success(f"✅ Cleared {deleted_count} annotation files from MinIO!")
-                st.experimental_rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error clearing MinIO: {str(e)}")
-        
-        # Add Label Studio Database cleanup option
-        st.markdown("### 🗃️ Label Studio Database Cleanup")
-        st.warning("⚠️ This will completely reset Label Studio by clearing the SQLite database")
-        st.info("This will remove all projects, users, and annotations from Label Studio")
-        
-        if st.button("🗑️ Clear Label Studio Database", key="clear_labelstudio_db"):
-            try:
-                import shutil
-                
-                st.info("🔄 Clearing Label Studio database and data...")
-                
-                # Clear the SQLite database
-                db_path = "label-studio-data/label_studio.sqlite3"
-                if os.path.exists(db_path):
-                    # Backup the database first
-                    backup_path = f"{db_path}.backup_{int(time.time())}"
-                    shutil.copy2(db_path, backup_path)
-                    st.info(f"📋 Database backed up to: {backup_path}")
-                    
-                    # Remove the database
-                    os.remove(db_path)
-                    st.success("✅ Label Studio database cleared!")
-                else:
-                    st.info("ℹ️ No database file found to clear")
-                
-                # Clear other Label Studio data
-                data_dirs = [
-                    "label-studio-data/export",
-                    "label-studio-data/media"
-                ]
-                
-                cleared_dirs = []
-                for data_dir in data_dirs:
-                    if os.path.exists(data_dir):
-                        shutil.rmtree(data_dir)
-                        os.makedirs(data_dir, exist_ok=True)
-                        cleared_dirs.append(data_dir)
-                
-                if cleared_dirs:
-                    st.success(f"✅ Cleared Label Studio data directories: {', '.join(cleared_dirs)}")
-                
-                st.warning("⚠️ **Important**: You need to restart the Label Studio container manually!")
-                st.info("Run this command on your host system:")
-                st.code("docker compose restart label-studio")
-                
-                st.success("🎉 Label Studio database cleared! Please restart the container to complete the reset.")
-                st.experimental_rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error clearing Label Studio database: {str(e)}")
-                import traceback
-                st.text(traceback.format_exc())
-        
-        # Add comprehensive cleanup option
-        st.markdown("### 🧹 Complete System Reset")
-        st.error("⚠️ **DANGER ZONE** - This will completely reset everything!")
-        st.warning("This will clear: Session state, Config files, MinIO data, AND Label Studio database")
-        
-        if st.button("💥 Complete System Reset", key="complete_system_reset"):
-            try:
-                # Clear session state
-                for key in list(st.session_state.keys()):
-                    del st.session_state[key]
-                st.info("✅ Session state cleared")
-                
-                # Clear config files
-                cleared = clear_all_config_files()
-                if cleared:
-                    st.info(f"✅ Cleared config files: {', '.join(cleared)}")
-                
-                # Clear MinIO
-                try:
-                    import boto3
-                    s3_client = boto3.client(
-                        's3',
-                        endpoint_url='http://minio:9000',
-                        aws_access_key_id='minioadmin',
-                        aws_secret_access_key='minioadmin123',
-                        region_name='us-east-1'
-                    )
-                    
-                    # Clear annotations
-                    response = s3_client.list_objects_v2(Bucket='segmentation-platform', Prefix='annotations/')
-                    deleted_count = 0
-                    if 'Contents' in response:
-                        for obj in response['Contents']:
-                            s3_client.delete_object(Bucket='segmentation-platform', Key=obj['Key'])
-                            deleted_count += 1
-                    st.info(f"✅ Cleared {deleted_count} MinIO annotation files")
-                except Exception as e:
-                    st.warning(f"⚠️ MinIO cleanup warning: {str(e)}")
-                
-                # Clear Label Studio database
-                try:
-                    import shutil
-                    
-                    # Clear database
-                    db_path = "label-studio-data/label_studio.sqlite3"
-                    if os.path.exists(db_path):
-                        backup_path = f"{db_path}.backup_{int(time.time())}"
-                        shutil.copy2(db_path, backup_path)
-                        os.remove(db_path)
-                        st.info("✅ Label Studio database cleared")
-                    
-                    # Clear data directories
-                    for data_dir in ["label-studio-data/export", "label-studio-data/media"]:
-                        if os.path.exists(data_dir):
-                            shutil.rmtree(data_dir)
-                            os.makedirs(data_dir, exist_ok=True)
-                    
-                    st.warning("⚠️ **Important**: You need to restart the Label Studio container manually!")
-                    st.info("Run this command on your host system:")
-                    st.code("docker compose restart label-studio")
-                    
-                except Exception as e:
-                    st.warning(f"⚠️ Label Studio cleanup warning: {str(e)}")
-                
-                st.success("🎉 Complete system reset performed!")
-                st.info("🔄 Refreshing page...")
-                time.sleep(2)
-                st.experimental_rerun()
-                
-            except Exception as e:
-                st.error(f"❌ Error during complete reset: {str(e)}")
-                import traceback
-                st.text(traceback.format_exc())
-        
-        st.markdown("### 📍 Config File Locations")
-        st.code("""
-Single Config Location (Simplified):
-• config/label_studio_project.json  - Project configuration
-• config/class_config.json          - Class configuration
-
-This location works in both local and Docker environments.
-        """)
     
     # Load existing project configuration on startup
     if 'label_studio_project_id' not in st.session_state:
@@ -1567,36 +1429,15 @@ This location works in both local and Docker environments.
             if st.button("🔍 Run Batch Evaluation on Label Studio Data"):
                 with st.spinner("Running batch evaluation on Label Studio annotations..."):
                     try:
-                        from models.inference import batch_evaluate_with_labelstudio_export
+                        from models.inference_batch import batch_evaluate_with_minio_annotations
                         
-                        # Check if we have export files, if not, try to create a temporary one from MinIO
-                        export_file = None
-                        export_dir = "label-studio-data/export/"
-                        
-                        if os.path.exists(export_dir):
-                            export_files = [f for f in os.listdir(export_dir) if f.endswith('.json') and 'project-' in f]
-                            if export_files:
-                                # Use the most recent export file
-                                export_files.sort(reverse=True)
-                                export_file = os.path.join(export_dir, export_files[0])
-                                st.info(f"Using existing export file: {export_file}")
-                            else:
-                                st.info("No export files found, but annotations exist in MinIO storage")
-                                st.info("The batch evaluation will work with the existing MinIO annotations")
-                                # Create a dummy export file path - the function will handle MinIO data
-                                export_file = "minio://annotations"
-                        else:
-                            st.info("Export directory not found, using MinIO annotations directly")
-                            export_file = "minio://annotations"
-                        
-                        # Run batch evaluation
+                        # Run batch evaluation directly from MinIO annotations
                         print("=" * 60)
-                        print("🚀 ABOUT TO CALL BATCH_EVALUATE_WITH_LABELSTUDIO_EXPORT")
+                        print("🚀 RUNNING BATCH EVALUATION FROM MINIO ANNOTATIONS")
                         print("=" * 60)
-                        results = batch_evaluate_with_labelstudio_export(
-                            export_file_path=export_file,
-                            model_path=model_path,
+                        results = batch_evaluate_with_minio_annotations(
                             bucket_name=bucket_name,
+                            model_path=model_path,
                             num_classes=num_classes,
                             threshold=st.session_state.threshold
                         )

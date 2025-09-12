@@ -33,7 +33,7 @@ services:
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./models/checkpoints:/app/models/checkpoints
-      - ./models/saved_models:/app/models/saved_models
+      - ./app:/app/app
     # GPU passthrough - enabled for GPU machines
     runtime: nvidia  # Enable GPU passthrough
     depends_on:
@@ -66,4 +66,8 @@ volumes:
       o: bind
       device: ./label-studio-data
   minio-data:
-
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./minio-data

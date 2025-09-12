@@ -1,3 +1,5 @@
+version: '3.8'
+
 services:
   # MinIO S3-compatible storage
   minio:
@@ -9,7 +11,7 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
     volumes:
-      - ./minio-data:/data
+      - minio-data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
@@ -32,9 +34,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
     volumes:
-      - ./models/checkpoints:/app/models/checkpoints
-      - ./models/saved_models:/app/models/saved_models
-      - .:/app/project
+      - ./models:/app/models
       - ./app:/app/app
     # GPU passthrough - conditional runtime configuration
     # Uncomment the line below ONLY if you have NVIDIA Docker runtime installed
@@ -58,12 +58,24 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
-
     command: label-studio start --username admin@example.com --password admin
     volumes:
-      - ./label-studio-data:/label-studio/data
+      - label-studio-data:/label-studio/data
+      - ./label-studio-data:/label-studio/data/backup  # Backup to local directory
     depends_on:
       - minio
     restart: unless-stopped
 
-# Named volumes removed - using bind mounts instead 
+volumes:
+  label-studio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./label-studio-data
+  minio-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./minio-data 

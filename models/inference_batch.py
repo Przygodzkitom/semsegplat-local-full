@@ -2,7 +2,7 @@ import os
 import cv2
 import numpy as np
 from tqdm import tqdm
-from models.inferencer import Inferencer
+from models.inference_single import Inferencer
 from models.config import ModelConfig
 import json
 
@@ -215,7 +215,7 @@ def parse_labelstudio_annotation(annotation_data, class_names):
         return None
 
 def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", model_path=None, num_classes=None, threshold=0.3):
-    """Batch evaluate using annotations directly from MinIO export storage"""
+    """Batch evaluate using annotations directly from Label Studio database"""
     
     # Load model configuration to get both encoder and class information
     config_file = model_path.replace('.pth', '_config.json')
@@ -278,82 +278,195 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
     debug_info.append(f"🔍 DEBUG: Inferencer created successfully")
     print(f"🔍 DEBUG: Inferencer created successfully")
     
-    # Read annotations directly from MinIO
-    print(f"🔍 DEBUG: Reading annotations from MinIO bucket: {bucket_name}")
-    debug_info.append(f"🔍 DEBUG: Reading annotations from MinIO bucket: {bucket_name}")
+    # Read annotations directly from Label Studio database
+    print(f"🔍 DEBUG: Reading annotations from Label Studio database")
+    debug_info.append(f"🔍 DEBUG: Reading annotations from Label Studio database")
     
     try:
-        # Import MinIO client
-        from minio import Minio
-        from minio.error import S3Error
+        import sqlite3
         
-        # Initialize MinIO client
-        minio_client = Minio(
-            "localhost:9000",
-            access_key="minioadmin",
-            secret_key="minioadmin123",
-            secure=False
+        # Path to Label Studio database
+        db_path = "label-studio-data/label_studio.sqlite3"
+        
+        if not os.path.exists(db_path):
+            print(f"❌ Label Studio database not found: {db_path}")
+            return {
+                'num_classes': num_classes,
+                'class_names': class_names,
+                'images_evaluated': 0,
+                'mean_ious': [],
+                'overall_mean_iou': 0.0,
+                'avg_metrics': {},
+                'status': 'no_data',
+                'error': f'Label Studio database not found: {db_path}',
+                'debug_info': debug_info
+            }
+        
+        # Connect to Label Studio database
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Query to get tasks with completions
+        query = """
+        SELECT 
+            t.id as task_id,
+            t.data as task_data,
+            tc.id as completion_id,
+            tc.result as completion_result
+        FROM task t
+        LEFT JOIN task_completion tc ON t.id = tc.task_id
+        WHERE tc.result IS NOT NULL
+        ORDER BY t.id, tc.id
+        """
+        
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        
+        if not rows:
+            print("❌ No annotations found in Label Studio database")
+            conn.close()
+            return {
+                'num_classes': num_classes,
+                'class_names': class_names,
+                'images_evaluated': 0,
+                'mean_ious': [],
+                'overall_mean_iou': 0.0,
+                'avg_metrics': {},
+                'status': 'no_data',
+                'error': 'No annotations found in Label Studio database',
+                'debug_info': debug_info
+            }
+        
+        print(f"✅ Found {len(rows)} annotation records in database")
+        debug_info.append(f"✅ Found {len(rows)} annotation records in database")
+        
+        # Group by task_id
+        tasks = {}
+        for row in rows:
+            task_id, task_data, completion_id, completion_result = row
+            
+            if task_id not in tasks:
+                tasks[task_id] = {
+                    'id': task_id,
+                    'data': json.loads(task_data) if task_data else {},
+                    'annotations': []
+                }
+            
+            if completion_result:
+                tasks[task_id]['annotations'].append({
+                    'id': completion_id,
+                    'result': json.loads(completion_result),
+                    'created_at': None  # Not available in this query
+                })
+        
+        # Convert to Label Studio export format
+        export_data = []
+        for task in tasks.values():
+            if task['annotations']:  # Only include tasks with annotations
+                export_data.append(task)
+        
+        if not export_data:
+            print("❌ No valid annotations found")
+            conn.close()
+            return {
+                'num_classes': num_classes,
+                'class_names': class_names,
+                'images_evaluated': 0,
+                'mean_ious': [],
+                'overall_mean_iou': 0.0,
+                'avg_metrics': {},
+                'status': 'no_data',
+                'error': 'No valid annotations found',
+                'debug_info': debug_info
+            }
+        
+        print(f"✅ Successfully parsed {len(export_data)} image-annotation pairs from database")
+        debug_info.append(f"✅ Successfully parsed {len(export_data)} image-annotation pairs from database")
+        
+        conn.close()
+        
+        # Now process the export data and load images
+        image_annotation_pairs = []
+        
+        # Initialize MinIO client for image access
+        import boto3
+        from botocore.exceptions import ClientError
+        
+        # MinIO configuration (same as training scripts)
+        endpoint_url = os.getenv('MINIO_ENDPOINT', 'http://localhost:9000')
+        access_key = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+        secret_key = os.getenv('MINIO_SECRET_KEY', 'minioadmin123')
+        
+        s3_client = boto3.client(
+            's3',
+            endpoint_url=endpoint_url,
+            aws_access_key_id=access_key,
+            aws_secret_access_key=secret_key,
+            region_name='us-east-1'
         )
         
-        # List annotation files in the bucket
-        annotation_objects = []
-        try:
-            for obj in minio_client.list_objects(bucket_name, prefix="annotations/", recursive=True):
-                if obj.object_name.endswith('.json') or not obj.object_name.endswith('/'):
-                    annotation_objects.append(obj.object_name)
-        except S3Error as e:
-            print(f"❌ Error listing MinIO objects: {e}")
-            return {
-                'num_classes': num_classes,
-                'class_names': class_names,
-                'images_evaluated': 0,
-                'mean_ious': [],
-                'overall_mean_iou': 0.0,
-                'avg_metrics': {},
-                'status': 'no_data',
-                'error': f'MinIO error: {e}',
-                'debug_info': debug_info
-            }
-        
-        if not annotation_objects:
-            print(f"❌ No annotation files found in MinIO bucket {bucket_name}")
-            return {
-                'num_classes': num_classes,
-                'class_names': class_names,
-                'images_evaluated': 0,
-                'mean_ious': [],
-                'overall_mean_iou': 0.0,
-                'avg_metrics': {},
-                'status': 'no_data',
-                'error': f'No annotation files found in MinIO bucket {bucket_name}',
-                'debug_info': debug_info
-            }
-        
-        print(f"✅ Found {len(annotation_objects)} annotation files in MinIO")
-        debug_info.append(f"✅ Found {len(annotation_objects)} annotation files in MinIO")
-        
-        # Process each annotation file
-        image_annotation_pairs = []
-        for obj_name in annotation_objects:
+        for task_data in export_data:
             try:
-                # Download annotation data
-                response = minio_client.get_object(bucket_name, obj_name)
-                annotation_data = json.loads(response.read().decode('utf-8'))
-                response.close()
-                response.release_conn()
+                # Extract image path from task data
+                data = task_data.get('data', {})
+                image_path = data.get('image', '') or data.get('$undefined$', '')
+                
+                if not image_path:
+                    print(f"⚠️ No image path in task {task_data.get('id', 'unknown')}")
+                    continue
+                
+                # Convert S3 URL to object key
+                if image_path.startswith('s3://'):
+                    image_key = image_path.replace(f's3://{bucket_name}/', '')
+                else:
+                    image_key = image_path
+                
+                # Check if image exists in MinIO
+                try:
+                    s3_client.head_object(Bucket=bucket_name, Key=image_key)
+                except:
+                    print(f"⚠️ Image not found in MinIO: {image_key}")
+                    continue
+                
+                # Load image from MinIO
+                response = s3_client.get_object(Bucket=bucket_name, Key=image_key)
+                image_data = response['Body'].read()
+                img = cv2.imdecode(np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR)
+                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+                
+                if img is None:
+                    print(f"⚠️ Failed to load image: {image_key}")
+                    continue
                 
                 # Parse the annotation data
-                parsed_data = parse_labelstudio_annotation(annotation_data, class_names)
-                if parsed_data:
-                    image_annotation_pairs.append(parsed_data)
+                # Get annotations from task_data
+                annotations = task_data.get('annotations', [])
+                if not annotations:
+                    print(f"⚠️ No annotations for task {task_data.get('id', 'unknown')}")
+                    continue
+                
+                # Get the result from the first annotation
+                annotation = annotations[0]
+                result = annotation.get('result', [])
+                # Create annotation data in the format expected by parse_labelstudio_annotation
+                annotation_data = {
+                    'result': result
+                }
+                gt_mask = parse_labelstudio_annotation(annotation_data, class_names)
+                if gt_mask is not None:
+                    # Return format: (image_path, gt_mask, image)
+                    image_annotation_pairs.append((image_key, gt_mask, img))
+                    print(f"✅ Processed: {os.path.basename(image_key)}")
+                else:
+                    print(f"⚠️ Failed to parse annotation for task {task_data.get('id', 'unknown')}")
                     
             except Exception as e:
-                print(f"⚠️ Error processing annotation {obj_name}: {e}")
-                debug_info.append(f"⚠️ Error processing annotation {obj_name}: {e}")
+                print(f"⚠️ Error processing task {task_data.get('id', 'unknown')}: {e}")
+                debug_info.append(f"⚠️ Error processing task {task_data.get('id', 'unknown')}: {e}")
                 continue
         
         if not image_annotation_pairs:
-            print(f"❌ No valid annotations found in MinIO")
+            print(f"❌ No valid image-annotation pairs found")
             return {
                 'num_classes': num_classes,
                 'class_names': class_names,
@@ -362,30 +475,95 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
                 'overall_mean_iou': 0.0,
                 'avg_metrics': {},
                 'status': 'no_data',
-                'error': 'No valid annotations found in MinIO',
+                'error': 'No valid image-annotation pairs found',
                 'debug_info': debug_info
             }
         
-        print(f"✅ Successfully parsed {len(image_annotation_pairs)} image-annotation pairs")
-        debug_info.append(f"✅ Successfully parsed {len(image_annotation_pairs)} image-annotation pairs")
+        print(f"✅ Successfully processed {len(image_annotation_pairs)} image-annotation pairs")
+        debug_info.append(f"✅ Successfully processed {len(image_annotation_pairs)} image-annotation pairs")
         
-        # Continue with the rest of the evaluation logic...
-        # (The rest of the function would be similar to the original batch_evaluate_with_labelstudio_export)
+        # Now run the actual evaluation
+        all_ious = []
+        all_metrics = []
         
-        return {
+        for i, (image_path, gt_mask, image) in enumerate(image_annotation_pairs):
+            try:
+                print(f"Processing image {i+1}/{len(image_annotation_pairs)}: {os.path.basename(image_path)}")
+                
+                # Run inference using predict_and_compare (like the old working version)
+                pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask)
+                
+                print(f"  ✅ Inference complete: IoU={ious}")
+                
+                all_ious.append(ious)
+                all_metrics.append(metrics)
+                    
+            except Exception as e:
+                print(f"⚠️ Error processing image {os.path.basename(image_path)}: {e}")
+                debug_info.append(f"⚠️ Error processing image {os.path.basename(image_path)}: {e}")
+                continue
+        
+        # Calculate final results
+        results = {
             'num_classes': num_classes,
             'class_names': class_names,
-            'images_evaluated': len(image_annotation_pairs),
+            'images_evaluated': 0,
             'mean_ious': [],
             'overall_mean_iou': 0.0,
             'avg_metrics': {},
-            'status': 'success',
-            'debug_info': debug_info
+            'status': 'no_data'
         }
         
+        if all_ious:
+            all_ious = np.array(all_ious)
+            mean_ious = np.nanmean(all_ious, axis=0)
+            
+            results.update({
+                'images_evaluated': len(all_ious),
+                'mean_ious': mean_ious.tolist(),
+                'overall_mean_iou': float(np.nanmean(mean_ious)),
+                'status': 'success'
+            })
+            
+            print("\n--- Evaluation Report ---")
+            print(f"Number of classes: {num_classes}")
+            print(f"Class names: {class_names}")
+            print(f"Images evaluated: {len(all_ious)}")
+            
+            for i, miou in enumerate(mean_ious):
+                class_name = class_names[i] if i < len(class_names) else f"Class {i}"
+                print(f"{class_name}: Mean IoU = {miou:.4f}")
+            
+            print(f"Mean IoU (all classes): {np.nanmean(mean_ious):.4f}")
+            
+            # Calculate average object-wise metrics
+            if all_metrics:
+                print("\n--- Object-wise Metrics ---")
+                avg_metrics = {}
+                for class_name in all_metrics[0].keys():
+                    avg_metrics[class_name] = {
+                        'precision': np.mean([m[class_name]['precision'] for m in all_metrics]),
+                        'recall': np.mean([m[class_name]['recall'] for m in all_metrics]),
+                        'f1': np.mean([m[class_name]['f1'] for m in all_metrics])
+                    }
+                    print(f"{class_name}:")
+                    print(f"  Precision: {avg_metrics[class_name]['precision']:.4f}")
+                    print(f"  Recall: {avg_metrics[class_name]['recall']:.4f}")
+                    print(f"  F1-Score: {avg_metrics[class_name]['f1']:.4f}")
+                
+                results['avg_metrics'] = avg_metrics
+        else:
+            print("No valid image-annotation pairs found for evaluation.")
+            results['status'] = 'no_data'
+        
+        # Add debug info to results
+        results['debug_info'] = debug_info
+        
+        return results
+        
     except Exception as e:
-        print(f"❌ Error reading from MinIO: {e}")
-        debug_info.append(f"❌ Error reading from MinIO: {e}")
+        print(f"❌ Error reading from database: {e}")
+        debug_info.append(f"❌ Error reading from database: {e}")
         return {
             'num_classes': num_classes,
             'class_names': class_names,
@@ -394,7 +572,7 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
             'overall_mean_iou': 0.0,
             'avg_metrics': {},
             'status': 'error',
-            'error': f'MinIO read error: {e}',
+            'error': f'Database read error: {e}',
             'debug_info': debug_info
         }
 
