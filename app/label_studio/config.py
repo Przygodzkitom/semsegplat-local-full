@@ -11,9 +11,12 @@ load_dotenv()
 def verify_label_studio_connection():
     """Verify Label Studio connection and credentials"""
     try:
+        # Get Label Studio URL from environment or use default
+        label_studio_url = os.getenv("LABEL_STUDIO_URL", "http://label-studio:8080")
+        
         # Check if Label Studio is responding
         try:
-            health = requests.get("http://labelstudio:8080/api/health", timeout=5)
+            health = requests.get(f"{label_studio_url}/api/health", timeout=5)
             if health.status_code != 200:
                 return False
         except:
@@ -27,7 +30,7 @@ def verify_label_studio_connection():
         try:
             # Verify token is valid by fetching projects
             client = Client(
-                url="http://labelstudio:8080",
+                url=label_studio_url,
                 api_key=personal_access_token
             )
             client.get_projects()
@@ -65,8 +68,9 @@ def create_label_studio_project(project_name, class_names, bucket_name=None):
             st.warning("Using default admin token - this may not work for API calls")
             
         # Initialize client with token
+        label_studio_url = os.getenv("LABEL_STUDIO_URL", "http://label-studio:8080")
         client = Client(
-            url="http://labelstudio:8080",
+            url=label_studio_url,
             api_key=personal_access_token
         )
         
@@ -157,8 +161,9 @@ def sync_images_to_label_studio(project_id, bucket_name):
         if personal_access_token == "admin":
             st.warning("Using default admin token - this may not work for API calls")
         
+        label_studio_url = os.getenv("LABEL_STUDIO_URL", "http://label-studio:8080")
         client = Client(
-            url="http://labelstudio:8080",
+            url=label_studio_url,
             api_key=personal_access_token
         )
         
@@ -186,8 +191,9 @@ def get_project_images(project_id):
         if personal_access_token == "admin":
             st.warning("Using default admin token - this may not work for API calls")
         
+        label_studio_url = os.getenv("LABEL_STUDIO_URL", "http://label-studio:8080")
         client = Client(
-            url="http://labelstudio:8080",
+            url=label_studio_url,
             api_key=personal_access_token
         )
         

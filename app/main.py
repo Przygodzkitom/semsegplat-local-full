@@ -271,6 +271,21 @@ docker-compose up -d
                 st.experimental_rerun()
         
         with col2:
+            if st.button("🧹 Clear Config Files", key="clear_config"):
+                with st.spinner("Clearing config files..."):
+                    try:
+                        cleared_files = clear_all_config_files()
+                        if cleared_files:
+                            st.success(f"✅ Cleared {len(cleared_files)} config files")
+                        else:
+                            st.info("ℹ️ No config files found to clear")
+                    except Exception as e:
+                        st.error(f"❌ Error clearing config files: {e}")
+        
+        # Additional cleanup options
+        col3, col4 = st.columns(2)
+        
+        with col3:
             if st.button("🧹 Clear Debug Files", key="clear_debug"):
                 with st.spinner("Clearing debug files..."):
                     try:
@@ -305,6 +320,24 @@ docker-compose up -d
     if 'label_studio_project_id' not in st.session_state:
         load_project_config()
     
+    # Check if we should clear session state (after cleanup)
+    # Look for a cleanup marker file
+    cleanup_marker = Path(".cleanup_completed")
+    if cleanup_marker.exists():
+        # Cleanup was completed - clear session state
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        # Remove the marker file
+        cleanup_marker.unlink()
+        st.experimental_rerun()
+    
+    # Force clear session state button (for debugging)
+    if st.button("🚨 FORCE CLEAR SESSION STATE", type="secondary"):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.success("Session state cleared! Refreshing...")
+        st.experimental_rerun()
+    
     # Debug: Show session state info
     if 'label_studio_project_id' in st.session_state:
         st.info(f"🔍 DEBUG: Session state has project ID: {st.session_state.label_studio_project_id}")
@@ -321,7 +354,8 @@ docker-compose up -d
     
     if 'label_studio_project_id' in st.session_state:
         project_id = st.session_state.label_studio_project_id
-        st.success(f"✅ Active Project: {st.session_state.get('label_studio_project_name', 'Unknown')} (ID: {project_id})")
+        project_name = st.session_state.get('label_studio_project_name', 'Unknown')
+        st.success(f"✅ Active Project: {project_name} (ID: {project_id})")
         
 
 
@@ -530,12 +564,12 @@ docker-compose up -d
     elif st.session_state.current_step == "annotate":
         st.header("Annotate Images")
         
-        # Check if project is already configured
-        
+        # Check if project is already configured (simple check - no validation needed)
         if 'label_studio_project_id' in st.session_state and st.session_state.label_studio_project_id:
             project_id = st.session_state.label_studio_project_id
             project_name = st.session_state.get('label_studio_project_name', 'Unknown')
             
+            # Project is configured - show the interface
             st.success(f"✅ Project Already Configured: {project_name} (ID: {project_id})")
             
             # Show project actions
@@ -555,9 +589,6 @@ docker-compose up -d
                 )
             
             st.info("🎯 Your project is ready for annotation! Use the links above to access Label Studio.")
-            
-
-            
             return
         
         # Label Studio Setup Section (only shown if no project is configured)

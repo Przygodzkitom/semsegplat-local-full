@@ -32,8 +32,9 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
-      - ./models/checkpoints:/app/models/checkpoints
+      - ./models:/app/models
       - ./app:/app/app
+      - ./label-studio-data:/app/label-studio-data
     # GPU passthrough - enabled for GPU machines
     runtime: nvidia  # Enable GPU passthrough
     depends_on:

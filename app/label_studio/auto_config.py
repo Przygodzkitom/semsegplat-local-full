@@ -13,7 +13,11 @@ class LabelStudioAutoConfig:
     def __init__(self, base_url: str = None):
         # Use container name when running in Docker, localhost when running locally
         if base_url is None:
-            if os.getenv("DOCKER_ENV"):
+            # Check for LABEL_STUDIO_URL environment variable first
+            env_url = os.getenv("LABEL_STUDIO_URL")
+            if env_url:
+                self.base_url = env_url
+            elif os.getenv("DOCKER_ENV"):
                 self.base_url = "http://label-studio:8080"
             else:
                 self.base_url = "http://localhost:8080"

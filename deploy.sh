@@ -29,13 +29,9 @@ echo ""
 echo "📁 Creating directory structure..."
 mkdir -p label-studio-data
 mkdir -p models/checkpoints
-mkdir -p models/saved_models
 mkdir -p models/utils
 mkdir -p app
 mkdir -p docker
-mkdir -p logs
-mkdir -p backups
-mkdir -p temp
 
 echo "✅ Directory structure created"
 
