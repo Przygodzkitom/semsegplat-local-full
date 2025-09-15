@@ -268,11 +268,30 @@ class ImprovedComprehensiveCleanup:
         
         issues = []
         
-        # Check Label Studio data
+        # Check Label Studio data - verify database is empty, not just that file exists
         if os.path.exists("label-studio-data/label_studio.sqlite3"):
-            issues.append("Label Studio database still exists")
+            try:
+                import sqlite3
+                conn = sqlite3.connect("label-studio-data/label_studio.sqlite3")
+                cursor = conn.cursor()
+                
+                # Check if there are any tasks or completions
+                cursor.execute("SELECT COUNT(*) FROM task")
+                task_count = cursor.fetchone()[0]
+                
+                cursor.execute("SELECT COUNT(*) FROM task_completion")
+                completion_count = cursor.fetchone()[0]
+                
+                conn.close()
+                
+                if task_count > 0 or completion_count > 0:
+                    issues.append(f"Label Studio database still contains data: {task_count} tasks, {completion_count} completions")
+                else:
+                    self.log("✅ Label Studio database is empty (as expected after container restart)")
+            except Exception as e:
+                self.log(f"⚠️ Could not verify Label Studio database: {e}", "WARN")
         else:
-            self.log("✅ Label Studio database cleared")
+            self.log("✅ Label Studio database file not found (will be created by container)")
         
         # Check MinIO data
         minio_images = "minio-data/segmentation-platform/images"

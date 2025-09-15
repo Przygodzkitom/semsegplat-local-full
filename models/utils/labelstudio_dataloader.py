@@ -158,10 +158,22 @@ class LabelStudioDataset(Dataset):
             # LabelStudio RLE format: [start, length, start, length, ...]
             mask = np.zeros(height * width, dtype=np.uint8)
             
-            for i in range(0, len(rle_data), 2):
-                start = rle_data[i]
-                length = rle_data[i + 1]
-                mask[start:start + length] = 1
+            if len(rle_data) % 2 == 0:
+                # Even length - process normally
+                for i in range(0, len(rle_data), 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
+            else:
+                # Odd length - truncate to even length
+                print(f"⚠️ DEBUG: Odd-length RLE data ({len(rle_data)}), truncating to even length")
+                even_length = len(rle_data) - 1
+                for i in range(0, even_length, 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
             
             return mask.reshape(height, width)
             
@@ -461,10 +473,22 @@ class LabelStudioGCSDataset(Dataset):
             # LabelStudio RLE format: [start, length, start, length, ...]
             mask = np.zeros(height * width, dtype=np.uint8)
             
-            for i in range(0, len(rle_data), 2):
-                start = rle_data[i]
-                length = rle_data[i + 1]
-                mask[start:start + length] = 1
+            if len(rle_data) % 2 == 0:
+                # Even length - process normally
+                for i in range(0, len(rle_data), 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
+            else:
+                # Odd length - truncate to even length
+                print(f"⚠️ DEBUG: Odd-length RLE data ({len(rle_data)}), truncating to even length")
+                even_length = len(rle_data) - 1
+                for i in range(0, even_length, 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
             
             return mask.reshape(height, width)
             
@@ -741,10 +765,22 @@ class LabelStudioGCSDatasetNumeric(Dataset):
             # LabelStudio RLE format: [start, length, start, length, ...]
             mask = np.zeros(height * width, dtype=np.uint8)
             
-            for i in range(0, len(rle_data), 2):
-                start = rle_data[i]
-                length = rle_data[i + 1]
-                mask[start:start + length] = 1
+            if len(rle_data) % 2 == 0:
+                # Even length - process normally
+                for i in range(0, len(rle_data), 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
+            else:
+                # Odd length - truncate to even length
+                print(f"⚠️ DEBUG: Odd-length RLE data ({len(rle_data)}), truncating to even length")
+                even_length = len(rle_data) - 1
+                for i in range(0, even_length, 2):
+                    start = rle_data[i]
+                    length = rle_data[i + 1]
+                    if start < len(mask) and start + length <= len(mask) and length > 0:
+                        mask[start:start + length] = 1
             
             return mask.reshape(height, width)
             

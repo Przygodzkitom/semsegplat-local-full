@@ -314,14 +314,40 @@ class TrainingService:
             return "/app/models/training.py"
     
     def _clear_progress(self):
-        """Clear previous progress files"""
+        """Clear previous progress files and memory state"""
         try:
+            # Clear progress files
             if os.path.exists(self.progress_file):
                 os.remove(self.progress_file)
             if os.path.exists(self.log_file):
                 os.remove(self.log_file)
+            
+            # Clear memory state
+            self._clear_memory_state()
+            
         except Exception as e:
             print(f"Error clearing progress: {e}")
+    
+    def _clear_memory_state(self):
+        """Clear memory state between training sessions"""
+        try:
+            import gc
+            import torch
+            
+            # Force garbage collection
+            gc.collect()
+            
+            # Clear PyTorch cache if available
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            
+            # Clear any remaining Python objects
+            gc.collect()
+            
+            print("🧹 Memory state cleared between training sessions")
+            
+        except Exception as e:
+            print(f"Warning: Could not clear memory state: {e}")
 
 # Global training service instance
 training_service = TrainingService()

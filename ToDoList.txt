@@ -1,0 +1,5 @@
+-- Remove excessive buttons, option etc from GUI
+-- Inference module must include feature to batch analyse iamges and calculate numbers of objects in each classes (other object features? size etc.)-export results to csv?
+-- Model training for brush annotations is downsized so taht it coulb tested on CPU, must be upgraded to ResNet100 for production
+-- Training fails when user adds new images and annotations and retrains the model
+

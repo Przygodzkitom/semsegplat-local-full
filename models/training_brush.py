@@ -15,6 +15,21 @@ import json
 import sys
 from datetime import datetime
 
+# Clear memory state at startup
+def clear_memory_state():
+    """Clear memory state at training startup"""
+    try:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        print("🧹 Memory state cleared at training startup")
+    except Exception as e:
+        print(f"Warning: Could not clear memory state: {e}")
+
+# Clear memory before starting
+clear_memory_state()
+
 # 🔍 DEBUG: Show Environment Variables at startup
 print("=" * 60)
 print("🔍 BRUSH TRAINING SCRIPT - ENVIRONMENT VARIABLES DEBUG:")

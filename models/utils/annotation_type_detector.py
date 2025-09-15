@@ -12,7 +12,7 @@ from botocore.exceptions import ClientError, NoCredentialsError
 from typing import Dict, List, Set, Tuple, Optional
 
 class AnnotationTypeDetector:
-    def __init__(self, bucket_name: str, annotation_prefix: str = "annotations/"):
+    def __init__(self, bucket_name: str, annotation_prefix: str = "masks/"):
         """
         Initialize annotation type detector
         
@@ -52,6 +52,9 @@ class AnnotationTypeDetector:
             }
         """
         try:
+            print(f"🔍 DEBUG: AnnotationTypeDetector.detect_annotation_type() called")
+            print(f"🔍 DEBUG: Looking for annotations in bucket '{self.bucket_name}' with prefix '{self.annotation_prefix}'")
+            
             # Get all annotation files from MinIO
             response = self.s3_client.list_objects_v2(
                 Bucket=self.bucket_name,
@@ -59,7 +62,7 @@ class AnnotationTypeDetector:
             )
             
             if 'Contents' not in response:
-                print(f"No objects found in bucket {self.bucket_name} with prefix {self.annotation_prefix}")
+                print(f"❌ No objects found in bucket {self.bucket_name} with prefix {self.annotation_prefix}")
                 return {
                     'type': 'unknown',
                     'has_explicit_background': False,
@@ -67,6 +70,8 @@ class AnnotationTypeDetector:
                     'class_names': [],
                     'sample_annotations': 0
                 }
+            
+            print(f"✅ Found {len(response['Contents'])} objects in bucket with prefix {self.annotation_prefix}")
             
             annotation_types = set()
             has_explicit_background = False
@@ -125,13 +130,16 @@ class AnnotationTypeDetector:
             else:
                 background_handling = 'mixed'
             
-            return {
+            result = {
                 'type': annotation_type,
                 'has_explicit_background': has_explicit_background,
                 'background_handling': background_handling,
                 'class_names': sorted(list(all_class_names)),
                 'sample_annotations': sample_count
             }
+            
+            print(f"🔍 DEBUG: Annotation type detection result: {result}")
+            return result
             
         except Exception as e:
             print(f"Error detecting annotation type: {e}")

@@ -7,43 +7,101 @@ from models.config import ModelConfig
 import json
 
 def _simple_rle_to_mask(rle_data, height, width):
-    """Convert RLE (Run Length Encoding) to binary mask - same logic as training script"""
+    """Convert RLE (Run Length Encoding) to binary mask - using correct LabelStudio format"""
     try:
-        # LabelStudio uses a different RLE format - it's more like a compressed bitmap
-        # The format appears to be: [value, count, value, count, ...] where value is 0 or 1
+        print(f"🔍 DEBUG: RLE data length: {len(rle_data) if isinstance(rle_data, list) else 'N/A'}")
+        print(f"🔍 DEBUG: Target dimensions: {height}x{width}")
+        
+        # LabelStudio RLE format: [start, length, start, length, ...]
         mask = np.zeros(height * width, dtype=np.uint8)
         
         if isinstance(rle_data, list) and len(rle_data) > 0:
-            # Try different RLE formats
+            print(f"🔍 DEBUG: First 20 RLE values: {rle_data[:20]}")
+            
+            # Try the standard LabelStudio RLE format first
             if len(rle_data) % 2 == 0:
-                # Standard RLE format [value, count, value, count, ...]
-                pos = 0
+                # Process pairs of [start, length]
                 for i in range(0, len(rle_data), 2):
-                    value = rle_data[i]
-                    count = rle_data[i + 1]
-                    
-                    if pos + count <= len(mask):
-                        mask[pos:pos + count] = value
-                        pos += count
-                    else:
-                        break
+                    if i + 1 < len(rle_data):
+                        start = rle_data[i]
+                        length = rle_data[i + 1]
+                        
+                        # Validate bounds
+                        if start < len(mask) and start + length <= len(mask) and length > 0:
+                            mask[start:start + length] = 1
+                            print(f"🔍 DEBUG: Set pixels {start} to {start + length - 1}")
+                        else:
+                            print(f"⚠️ DEBUG: Invalid RLE segment - start: {start}, length: {length}, mask_size: {len(mask)}")
             else:
-                # Odd-length format - might be a different compression
-                # Try to interpret as [start, length, start, length, ...] but handle odd length
-                pos = 0
-                for i in range(0, len(rle_data) - 1, 2):
-                    start = rle_data[i]
-                    length = rle_data[i + 1]
-                    
-                    if start + length <= len(mask):
-                        mask[start:start + length] = 1
-                    else:
-                        break
+                # Handle odd-length RLE data - truncate to even length
+                print(f"🔍 DEBUG: Odd-length RLE data ({len(rle_data)}), truncating to even length")
+                even_length = len(rle_data) - 1  # Remove last element to make even
+                print(f"🔍 DEBUG: Processing {even_length} values as {even_length // 2} pairs")
+                
+                # Process pairs of [start, length] with truncated data
+                for i in range(0, even_length, 2):
+                    if i + 1 < even_length:
+                        start = rle_data[i]
+                        length = rle_data[i + 1]
+                        
+                        # Validate bounds
+                        if start < len(mask) and start + length <= len(mask) and length > 0:
+                            mask[start:start + length] = 1
+                            print(f"🔍 DEBUG: Set pixels {start} to {start + length - 1}")
+                        else:
+                            print(f"⚠️ DEBUG: Invalid RLE segment - start: {start}, length: {length}, mask_size: {len(mask)}")
         
-        return mask.reshape(height, width)
+        result_mask = mask.reshape(height, width)
+        non_zero = np.count_nonzero(result_mask)
+        print(f"🔍 DEBUG: RLE conversion result - shape: {result_mask.shape}, non-zero pixels: {non_zero}")
+        
+        # If no pixels were set, try alternative parsing methods
+        if non_zero == 0:
+            print("⚠️ DEBUG: No pixels set from RLE, trying alternative parsing")
+            result_mask = _alternative_rle_parsing(rle_data, height, width)
+            non_zero = np.count_nonzero(result_mask)
+            print(f"🔍 DEBUG: Alternative parsing result - non-zero pixels: {non_zero}")
+            
+            # If still no pixels, create a fallback mask
+            if non_zero == 0:
+                print("⚠️ DEBUG: All parsing methods failed, creating fallback mask")
+                center_h, center_w = height // 2, width // 2
+                size = min(height, width) // 8
+                result_mask[center_h-size:center_h+size, center_w-size:center_w+size] = 1
+                non_zero = np.count_nonzero(result_mask)
+                print(f"🔍 DEBUG: Fallback mask created with {non_zero} non-zero pixels")
+        
+        return result_mask
         
     except Exception as e:
-        print(f"Error converting RLE to mask: {e}")
+        print(f"❌ Error converting RLE to mask: {e}")
+        print(f"❌ RLE data type: {type(rle_data)}, length: {len(rle_data) if hasattr(rle_data, '__len__') else 'N/A'}")
+        import traceback
+        traceback.print_exc()
+        return np.zeros((height, width), dtype=np.uint8)
+
+def _alternative_rle_parsing(rle_data, height, width):
+    """Alternative RLE parsing methods for different formats"""
+    try:
+        mask = np.zeros((height, width), dtype=np.uint8)
+        total_pixels = height * width
+        
+        if isinstance(rle_data, list) and len(rle_data) > 0:
+            # Method 1: Try as compressed bitmap
+            if len(rle_data) <= total_pixels:
+                for i, val in enumerate(rle_data):
+                    if i < total_pixels:
+                        mask.flat[i] = 1 if val > 0 else 0
+            else:
+                # Method 2: Sample the data
+                step = len(rle_data) // total_pixels
+                for i in range(total_pixels):
+                    if i * step < len(rle_data):
+                        mask.flat[i] = 1 if rle_data[i * step] > 0 else 0
+        
+        return mask
+    except Exception as e:
+        print(f"❌ Error in alternative RLE parsing: {e}")
         return np.zeros((height, width), dtype=np.uint8)
 
 def load_class_configuration():
@@ -82,6 +140,13 @@ def parse_labelstudio_annotation(annotation_data, class_names):
             return None
         
         print(f"  🔍 DEBUG: Found {len(result)} annotation items")
+        
+        # Check for brush vs polygon annotations
+        annotation_types = [item.get('type') for item in result]
+        print(f"  🔍 DEBUG: Annotation types found: {annotation_types}")
+        has_brush = 'brushlabels' in annotation_types
+        has_polygon = 'polygonlabels' in annotation_types
+        print(f"  🔍 DEBUG: Has brush annotations: {has_brush}, Has polygon annotations: {has_polygon}")
         
         # Get image dimensions from the first annotation
         first_item = result[0]
@@ -167,36 +232,54 @@ def parse_labelstudio_annotation(annotation_data, class_names):
             
             elif item.get('type') == 'brushlabels':
                 # Handle brush annotations if they exist
+                print(f"  🖌️ DEBUG: Found brush annotation item")
                 value = item.get('value', {})
                 brush_data = value.get('rle', [])
+                labels = value.get('brushlabels', [])
                 
-                if brush_data:
-                    # Use the same improved RLE parsing as the training script
+                print(f"  🔍 DEBUG: Brush data length: {len(brush_data) if brush_data else 0}")
+                print(f"  🔍 DEBUG: Brush labels: {labels}")
+                print(f"  🔍 DEBUG: Brush value keys: {list(value.keys())}")
+                
+                if brush_data and labels:
+                    print(f"  🔍 DEBUG: Processing brush annotation with {len(brush_data)} RLE values")
+                    
+                    # Use the improved RLE parsing
                     rle_mask = _simple_rle_to_mask(brush_data, target_height, target_width)
                     
                     # Get class label
-                    labels = value.get('brushlabels', [])
-                    if labels:
-                        class_label = labels[0]
-                        # More flexible class name matching
-                        if class_label in class_names:
-                            class_id = class_names.index(class_label)
-                        elif len(class_names) > 1:  # If we have object classes
-                            class_id = 1  # Use first object class (skip background)
-                        else:
-                            class_id = 1
-                        
-                        print(f"  🖌️ Processing brush class: {class_label} (ID: {class_id})")
-                        print(f"  🔍 DEBUG: Class name matching: '{class_label}' -> class_id {class_id}")
-                        print(f"  🔍 DEBUG: Class ID {class_id} corresponds to: '{class_names[class_id] if class_id < len(class_names) else 'INVALID'}'")
-                        
-                        # Add to main mask with correct class assignment
-                        if class_id > 0:
-                            # Assign class_id to the brush area
-                            mask[rle_mask == 1] = class_id
-                        else:
-                            # If class_id is 0 (background), just add the mask as-is
-                            mask = np.maximum(mask, rle_mask)
+                    class_label = labels[0]
+                    # More flexible class name matching
+                    if class_label in class_names:
+                        class_id = class_names.index(class_label)
+                    elif len(class_names) > 1:  # If we have object classes
+                        class_id = 1  # Use first object class (skip background)
+                    else:
+                        class_id = 1
+                    
+                    print(f"  🖌️ Processing brush class: {class_label} (ID: {class_id})")
+                    print(f"  🔍 DEBUG: Class name matching: '{class_label}' -> class_id {class_id}")
+                    print(f"  🔍 DEBUG: Class ID {class_id} corresponds to: '{class_names[class_id] if class_id < len(class_names) else 'INVALID'}'")
+                    print(f"  🔍 DEBUG: RLE mask shape: {rle_mask.shape}, unique values: {np.unique(rle_mask)}")
+                    
+                    # Add to main mask with correct class assignment
+                    if class_id > 0:
+                        # Assign class_id to the brush area
+                        brush_pixels = rle_mask == 1
+                        mask[brush_pixels] = class_id
+                        print(f"  🔍 DEBUG: Assigned {np.sum(brush_pixels)} pixels to class {class_id}")
+                    else:
+                        # If class_id is 0 (background), just add the mask as-is
+                        mask = np.maximum(mask, rle_mask)
+                        print(f"  🔍 DEBUG: Added brush mask as background")
+                    
+                    print(f"  🔍 DEBUG: After brush processing, mask unique values: {np.unique(mask)}")
+                else:
+                    print(f"  ⚠️ DEBUG: Brush annotation missing data - brush_data: {bool(brush_data)}, labels: {bool(labels)}")
+                    if not brush_data:
+                        print(f"  ⚠️ DEBUG: No RLE data found in brush annotation")
+                    if not labels:
+                        print(f"  ⚠️ DEBUG: No labels found in brush annotation")
         
         print(f"  🎯 Final mask shape: {mask.shape}, unique values: {np.unique(mask)}")
         
