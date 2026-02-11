@@ -1443,17 +1443,14 @@ docker-compose up -d
         uploaded_image = st.file_uploader("Image", type=["jpg", "png"], key="image_uploader")
         
         # GT mask options
-        st.subheader("Ground Truth Options")
+        st.subheader("Evaluation Mode")
         gt_option = st.radio(
-            "Choose ground truth source:",
-            ["Upload GT mask", "Use Label Studio annotations", "No GT (inference only)"],
-            help="Select how to provide ground truth for evaluation"
+            "Choose evaluation mode:",
+            ["Use Label Studio annotations", "No GT (inference only)"],
+            help="Evaluate with Label Studio annotations or run inference without ground truth"
         )
-        
-        uploaded_mask = None
-        if gt_option == "Upload GT mask":
-            uploaded_mask = st.file_uploader("Ground Truth Mask", type=["png", "jpg"], key="mask_uploader")
-        elif gt_option == "Use Label Studio annotations":
+
+        if gt_option == "Use Label Studio annotations":
             st.info("Will use annotations from storage for evaluation")
             
             # Add batch evaluation option
@@ -1532,54 +1529,14 @@ docker-compose up -d
                 image_bytes = uploaded_image.read()
                 image = process_image(image_bytes)
 
-                if gt_option == "Upload GT mask" and uploaded_mask is not None:
-                    gt_mask = cv2.imdecode(np.frombuffer(uploaded_mask.read(), np.uint8), 0)
-                    pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask)
-                    overlayed_pred, overlayed_gt = inferencer.create_visualization(image, pred_mask, gt_mask)
-                    
-                    # Display results
-                    col1, col2 = st.columns(2)
-                    with col1:
-                        st.image(overlayed_pred, caption="Predicted Mask", use_column_width=True)
-                    with col2:
-                        st.image(overlayed_gt, caption="Ground Truth Mask", use_column_width=True)
-                    
-                    # Display metrics
-                    st.subheader("📊 Evaluation Metrics")
-                    
-                    # IoU scores
-                    st.write("**IoU per class:**")
-                    for i, iou in enumerate(ious):
-                        class_name = class_names[i] if i < len(class_names) else f"Class {i}"
-                        st.write(f"  {class_name}: {iou:.3f}" if not np.isnan(iou) else f"  {class_name}: N/A")
-                    
-                    # Object-wise metrics if available
-                    if metrics:
-                        st.write("**Object-wise metrics:**")
-                        for class_name, class_metrics in metrics.items():
-                            st.write(f"  **{class_name}:**")
-                            if isinstance(class_metrics, dict):
-                                st.write(f"    Precision: {class_metrics.get('precision', 'N/A'):.3f}")
-                                st.write(f"    Recall: {class_metrics.get('recall', 'N/A'):.3f}")
-                                st.write(f"    F1-Score: {class_metrics.get('f1', 'N/A'):.3f}")
-                                st.write(f"    True Positives: {class_metrics.get('tp', 'N/A')}")
-                                st.write(f"    False Positives: {class_metrics.get('fp', 'N/A')}")
-                                st.write(f"    False Negatives: {class_metrics.get('fn', 'N/A')}")
-                                st.write(f"    Predicted Objects: {class_metrics.get('n_pred', 'N/A')}")
-                                st.write(f"    Ground Truth Objects: {class_metrics.get('n_gt', 'N/A')}")
-                            else:
-                                st.write(f"    Raw metrics: {class_metrics}")
-                    else:
-                        st.warning("No object-wise metrics available")
-                    
-                elif gt_option == "No GT (inference only)":
+                if gt_option == "No GT (inference only)":
                     pred_masks = inferencer.predict(image)
                     overlayed_pred, _ = inferencer.create_visualization(image, pred_masks)
                     st.image(overlayed_pred, caption="Predicted Mask", use_column_width=True)
                     st.info("No ground truth provided - inference only mode")
-                    
                 else:
-                    st.warning("Please provide ground truth for evaluation")
+                    # Use Label Studio annotations mode
+                    st.info("💡 Use the 'Run Batch Evaluation on Label Studio Data' button above to evaluate with annotated images.")
 
 if __name__ == "__main__":
 
