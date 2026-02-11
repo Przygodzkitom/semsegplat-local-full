@@ -18,38 +18,46 @@ This project follows Docker's core principle:
 - **10GB+ free disk space**
 - **NVIDIA GPU** (optional - will use CPU if not available)
 
-## ⚡ Quick Setup (3 steps!)
+## ⚡ Quick Setup (2 steps!)
 
-### 1. Add Google Cloud Credentials
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Navigate to **IAM & Admin > Service Accounts**
-3. Create a new service account or select existing
-4. Add roles: **Storage Object Admin** and **Storage Object Viewer**
-5. Create a new key (JSON format)
-6. Download and save as `label-studio-key.json` in project root
-
-### 2. Build and Run (That's it!)
+### 1. Clone the Repository
 ```bash
-# Build the container (works on any platform)
-docker build -f docker/Dockerfile -t semsegplat-app .
+git clone <your-repo-url>
+cd semsegplat-full_local_version
+```
 
-# Start the application (auto-detects GPU availability)
-# On Linux/macOS:
+### 2. Start the Platform (Choose One)
+
+**Option A: Quick Start (Recommended)**
+```bash
+# Linux/macOS - Automatic directory creation & GPU detection
+chmod +x start.sh
 ./start.sh
 
-# On Windows:
+# Windows - Automatic directory creation & GPU detection
 start.bat
+```
 
-# Or manually (modern Docker):
-docker compose up  # Works on any machine, auto-detects GPU
+**Option B: Full Deployment (First-time setup)**
+```bash
+# Linux/macOS - Includes validation and health checks
+chmod +x deploy.sh
+./deploy.sh
+```
 
-# Or manually (legacy Docker):
-docker-compose up  # Works on any machine, auto-detects GPU
+**Option C: Manual Start**
+```bash
+# CPU-only or automatic GPU fallback
+docker compose up -d
+
+# Force GPU configuration (requires NVIDIA Docker)
+docker compose -f docker-compose.gpu.yml up -d
 ```
 
 ### 3. Access the Applications
-- **Main App**: http://localhost:8501
+- **Streamlit App**: http://localhost:8501
 - **Label Studio**: http://localhost:8080 (admin@example.com / admin)
+- **MinIO Console**: http://localhost:9001 (minioadmin / minioadmin123)
 
 ## 🎯 First Steps
 
@@ -57,6 +65,45 @@ docker-compose up  # Works on any machine, auto-detects GPU
 2. **Annotate**: Open Label Studio and create segmentation masks
 3. **Train**: Go to "Train Model" tab, detect classes, and start training
 4. **Inference**: Test your trained model on new images
+
+## 🔧 Understanding Startup Scripts
+
+### start.sh / start.bat (Quick Start)
+**What it does:**
+- ✅ Creates required data directories automatically
+- ✅ Auto-detects GPU availability (start.sh only)
+- ✅ Starts containers immediately
+- ⚡ Fast startup for daily use
+
+**Use when:**
+- Restarting after `docker compose down`
+- Daily development work
+- You want quick startup
+
+### deploy.sh (Full Deployment)
+**What it does:**
+- ✅ Checks Docker installation
+- ✅ Creates all directories (including redundant safety checks)
+- ✅ Starts MinIO first and waits for readiness
+- ✅ Tests connectivity to all services
+- ✅ Displays access URLs and credentials
+- ✅ Shows next steps and useful commands
+
+**Use when:**
+- First-time setup on a new machine
+- Troubleshooting deployment issues
+- You want comprehensive validation
+
+### Data Directory Creation
+
+Both scripts automatically create:
+```
+label-studio-data/      ← Label Studio database
+minio-data/             ← S3 storage for images/annotations
+models/checkpoints/     ← Trained model storage
+```
+
+**No manual directory creation needed!** 🎉
 
 ## 🔍 Automatic GPU Detection
 

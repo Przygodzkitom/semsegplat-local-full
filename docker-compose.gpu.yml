@@ -56,7 +56,6 @@ services:
     command: label-studio start --username admin@example.com --password admin
     volumes:
       - label-studio-data:/label-studio/data
-      - ./label-studio-data:/label-studio/data/backup  # Backup to local directory
     restart: unless-stopped
 
 volumes:

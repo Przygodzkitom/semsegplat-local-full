@@ -5,6 +5,14 @@ REM Universal script that works on any machine - GPU or CPU-only
 echo 🚀 Semantic Segmentation Platform - Universal Startup
 echo ===================================================
 
+REM Create required directories if they don't exist
+echo 📁 Ensuring directory structure...
+if not exist "label-studio-data" mkdir label-studio-data
+if not exist "minio-data" mkdir minio-data
+if not exist "models\checkpoints" mkdir models\checkpoints
+echo ✅ Directory structure ready
+echo.
+
 echo 🔍 Starting with GPU configuration...
 
 REM Try GPU configuration first

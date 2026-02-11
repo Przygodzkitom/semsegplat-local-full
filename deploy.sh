@@ -28,6 +28,7 @@ echo "✅ Docker and Docker Compose are available"
 echo ""
 echo "📁 Creating directory structure..."
 mkdir -p label-studio-data
+mkdir -p minio-data
 mkdir -p models/checkpoints
 mkdir -p models/utils
 mkdir -p app

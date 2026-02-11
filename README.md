@@ -17,40 +17,57 @@ This platform provides a complete workflow for semantic segmentation projects:
 ### Prerequisites
 
 - Docker and Docker Compose
-- Python 3.10+ (for local development)
+- 8GB+ RAM available
+- 10GB+ free disk space
 - NVIDIA GPU (optional, for GPU acceleration)
 
-### ⚠️ CRITICAL: Read This First!
-
-**Before setting up, read the [CRITICAL_FIX_DOCUMENTATION.md](CRITICAL_FIX_DOCUMENTATION.md) file!**
-
-This documents a critical bug where the trailing slash in export storage prefix (`annotations/` vs `annotations`) can prevent annotations from saving. This fix is essential for the platform to work correctly.
-
-### Quick Deployment
+### Installation
 
 ```bash
 # Clone the repository
 git clone <your-repo-url>
 cd semsegplat-full_local_version
-
-# Start all services
-docker compose up -d
-
-# Access the platform
-# Streamlit App: http://localhost:8501
-# Label Studio: http://localhost:8080
-# MinIO Console: http://localhost:9001
 ```
 
-### Alternative: Use Deployment Scripts
+### Starting the Platform
 
+**Option 1: Quick Start (Recommended for daily use)**
 ```bash
-# Automated setup (recommended for new machines)
-./deploy.sh
+# Linux/Mac - Auto-detects GPU and creates directories
+chmod +x start.sh
+./start.sh
 
-# Or use Python script
-python init_project.py
+# Windows - Auto-detects GPU and creates directories
+start.bat
 ```
+
+**Option 2: Full Deployment (Recommended for first-time setup)**
+```bash
+# Linux/Mac - Includes validation and health checks
+chmod +x deploy.sh
+./deploy.sh
+```
+
+**Option 3: Manual Start**
+```bash
+# Only if you prefer manual control
+docker compose up -d
+```
+
+### Access the Platform
+
+- **Streamlit App**: http://localhost:8501
+- **Label Studio**: http://localhost:8080 (admin@example.com / admin)
+- **MinIO Console**: http://localhost:9001 (minioadmin / minioadmin123)
+
+### Script Comparison
+
+| Script | Best For | Features |
+|--------|----------|----------|
+| **start.sh/bat** | Daily use, quick restart | Auto-creates directories, GPU detection, fast startup |
+| **deploy.sh** | First-time setup, troubleshooting | Full validation, health checks, detailed output |
+
+Both scripts automatically create required data directories, so no manual setup is needed!
 
 ## 📁 Project Structure
 
@@ -169,23 +186,42 @@ segmentation-platform/
 
 ## 🔄 Data Persistence
 
+All data is stored on your host machine using Docker bind mounts, ensuring data survives container restarts and rebuilds.
+
 ### Label Studio Data
 
-- **Location**: `./label-studio-data/`
-- **Persistence**: Survives Docker restarts
-- **Backup**: Automatic backup to `./label-studio-data/backup/`
+- **Location**: `./label-studio-data/` (on host)
+- **Contains**: Database, project configs, user settings
+- **Container Path**: `/label-studio/data`
+- **Auto-created**: By start.sh/bat or deploy.sh
 
 ### MinIO Data
 
-- **Location**: Docker volume `minio-data`
-- **Persistence**: Survives Docker restarts
+- **Location**: `./minio-data/` (on host)
+- **Contains**: Images, annotations, model artifacts
+- **Container Path**: `/data`
 - **Access**: MinIO Console at `http://localhost:9001`
+- **Auto-created**: By start.sh/bat or deploy.sh
 
 ### Model Checkpoints
 
-- **Location**: `./models/checkpoints/`
-- **Persistence**: Survives Docker restarts
-- **Format**: `.pth` files with `_config.json` metadata
+- **Location**: `./models/checkpoints/` (on host)
+- **Contains**: Trained models (.pth) and configs (_config.json)
+- **Container Path**: `/app/models/checkpoints`
+- **Auto-created**: By start.sh/bat or deploy.sh
+
+### Backup Recommendations
+
+```bash
+# Backup all data
+tar -czf backup-$(date +%Y%m%d).tar.gz \
+  label-studio-data/ \
+  minio-data/ \
+  models/checkpoints/
+
+# Restore from backup
+tar -xzf backup-20240101.tar.gz
+```
 
 ## 🛠️ Development
 

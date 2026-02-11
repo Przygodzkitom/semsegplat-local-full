@@ -6,6 +6,14 @@
 echo "🚀 Semantic Segmentation Platform - Auto-Detection Startup"
 echo "=========================================================="
 
+# Create required directories if they don't exist
+echo "📁 Ensuring directory structure..."
+mkdir -p label-studio-data
+mkdir -p minio-data
+mkdir -p models/checkpoints
+echo "✅ Directory structure ready"
+echo ""
+
 # Detect which docker compose command to use
 if command -v docker &> /dev/null; then
     if docker compose version &> /dev/null; then
