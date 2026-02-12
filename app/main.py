@@ -19,6 +19,7 @@ from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
 from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
 from app.image_utils import process_uploaded_images, get_supported_formats, format_file_size, estimate_conversion_time
+from models.batch_analysis import analyze_single_image, create_analysis_overlay, aggregate_batch_results
 
 # Configure resource limits and memory management
 def configure_resource_limits():
@@ -387,7 +388,8 @@ docker-compose up -d
             "upload": "1. Upload Images",
             "annotate": "2. Annotate Images",
             "train": "3. Train Model",
-            "inference": "4. Run Inference"
+            "inference": "4. Run Inference",
+            "batch_analysis": "5. Batch Analysis"
         }
 
         for step, label in steps.items():
@@ -1537,6 +1539,229 @@ docker-compose up -d
                 else:
                     # Use Label Studio annotations mode
                     st.info("💡 Use the 'Run Batch Evaluation on Label Studio Data' button above to evaluate with annotated images.")
+
+    elif st.session_state.current_step == "batch_analysis":
+        st.header("Batch Analysis")
+        st.info("Upload images for quantitative segmentation analysis. "
+                "This counts objects and measures their area per class. "
+                "No ground truth comparison is performed.")
+
+        # Model selection
+        checkpoints_dir = "models/checkpoints"
+        model_files = [f for f in os.listdir(checkpoints_dir) if f.endswith('.pth')]
+
+        if not model_files:
+            st.error(f"No model files (.pth) found in {checkpoints_dir}")
+            st.info("Please train a model first in the training section.")
+            st.stop()
+
+        selected_model = st.selectbox("Select model", model_files,
+                                       key="ba_model_select")
+        model_path = os.path.join(checkpoints_dir, selected_model)
+
+        # Load model config
+        config_path = model_path.replace('.pth', '_config.json')
+        if os.path.exists(config_path):
+            try:
+                with open(config_path, 'r') as f:
+                    model_config = json.load(f)
+                class_names = model_config.get('class_names', ["Background"])
+                num_classes = len(class_names)
+                st.success(f"Model config: {num_classes} classes - {', '.join(class_names)}")
+            except Exception as e:
+                st.warning(f"Could not load model config: {e}")
+                class_names = ["Background"]
+                num_classes = 1
+        else:
+            st.warning("No model config found. Using default configuration.")
+            class_names = ["Background"]
+            num_classes = 1
+
+        # Threshold slider
+        if 'ba_threshold' not in st.session_state:
+            st.session_state.ba_threshold = 0.3
+
+        ba_threshold = st.slider(
+            "Segmentation Threshold", 0.0, 1.0,
+            value=st.session_state.ba_threshold, step=0.05,
+            key='ba_threshold_slider',
+            help="Higher values = more selective segmentation."
+        )
+        st.session_state.ba_threshold = ba_threshold
+
+        # Minimum object area filter
+        min_area = st.number_input(
+            "Minimum object area (pixels)",
+            min_value=0, max_value=10000, value=100, step=50,
+            key='ba_min_area',
+            help="Objects smaller than this pixel count are ignored."
+        )
+
+        # File upload
+        st.subheader("Upload Images for Analysis")
+        uploaded_files = st.file_uploader(
+            "Choose images",
+            accept_multiple_files=True,
+            type=['png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff'],
+            key="ba_file_uploader"
+        )
+
+        if uploaded_files:
+            st.info(f"Selected {len(uploaded_files)} image(s) for analysis.")
+
+            if st.button("Run Batch Analysis", key="ba_run"):
+                # Load model (cached)
+                @st.cache_resource
+                def get_ba_inferencer(_model_path, _num_classes,
+                                      _class_names, _threshold):
+                    _config = ModelConfig(
+                        num_classes=_num_classes,
+                        class_names=list(_class_names)
+                    )
+                    cfg_file = _model_path.replace('.pth', '_config.json')
+                    if os.path.exists(cfg_file):
+                        try:
+                            with open(cfg_file, 'r') as f:
+                                mc = json.load(f)
+                            if 'encoder_name' in mc:
+                                _config.encoder_name = mc['encoder_name']
+                        except Exception:
+                            pass
+                    return Inferencer(_model_path, _config,
+                                     threshold=_threshold)
+
+                try:
+                    inferencer = get_ba_inferencer(
+                        model_path, num_classes,
+                        tuple(class_names), ba_threshold
+                    )
+                except Exception as e:
+                    st.error(f"Error loading model: {str(e)}")
+                    st.stop()
+
+                # Process images
+                all_results = []
+                all_overlays = []
+                filenames = []
+
+                progress = st.progress(0)
+                status = st.empty()
+
+                for idx, uploaded_file in enumerate(uploaded_files):
+                    status.text(
+                        f"Analyzing {uploaded_file.name} "
+                        f"({idx+1}/{len(uploaded_files)})..."
+                    )
+
+                    try:
+                        file_bytes = uploaded_file.read()
+                        image = cv2.imdecode(
+                            np.frombuffer(file_bytes, np.uint8), 1
+                        )
+                        if image is None:
+                            st.warning(f"Could not decode {uploaded_file.name}")
+                            continue
+
+                        # predict() expects BGR input
+                        pred_masks = inferencer.predict(image)
+
+                        # Convert to RGB for display/overlay
+                        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
+                        # Analyze
+                        analysis = analyze_single_image(
+                            pred_masks, class_names,
+                            min_object_area=min_area
+                        )
+
+                        # Create overlay
+                        overlay = create_analysis_overlay(
+                            image_rgb, pred_masks,
+                            class_names, analysis
+                        )
+
+                        all_results.append(analysis)
+                        all_overlays.append(overlay)
+                        filenames.append(uploaded_file.name)
+
+                    except Exception as e:
+                        st.warning(
+                            f"Error processing {uploaded_file.name}: {e}"
+                        )
+
+                    progress.progress((idx + 1) / len(uploaded_files))
+
+                status.text("Analysis complete!")
+                progress.progress(1.0)
+
+                # Store results in session state
+                st.session_state.ba_results = all_results
+                st.session_state.ba_overlays = all_overlays
+                st.session_state.ba_filenames = filenames
+
+        # Display results (persists across reruns)
+        if 'ba_results' in st.session_state and st.session_state.ba_results:
+            all_results = st.session_state.ba_results
+            all_overlays = st.session_state.ba_overlays
+            filenames = st.session_state.ba_filenames
+
+            st.subheader("Summary Table")
+
+            import pandas as pd
+            summary_df = aggregate_batch_results(all_results, filenames)
+            st.dataframe(summary_df, use_container_width=True)
+
+            # CSV Export
+            csv_data = summary_df.to_csv(index=False)
+            st.download_button(
+                label="Download results as CSV",
+                data=csv_data,
+                file_name="batch_analysis_results.csv",
+                mime="text/csv",
+                key="ba_csv_download"
+            )
+
+            # Per-image detail view
+            st.subheader("Per-Image Details")
+
+            selected_image = st.selectbox(
+                "Select image to inspect",
+                filenames,
+                key="ba_image_select"
+            )
+
+            if selected_image:
+                img_idx = filenames.index(selected_image)
+                result = all_results[img_idx]
+                overlay = all_overlays[img_idx]
+
+                st.image(overlay, caption=f"Analysis: {selected_image}",
+                         use_column_width=True)
+
+                for class_name, class_data in result['classes'].items():
+                    with st.expander(
+                        f"{class_name}: {class_data['object_count']} objects, "
+                        f"{class_data['total_area_percent']:.2f}% area",
+                        expanded=True
+                    ):
+                        col1, col2, col3 = st.columns(3)
+                        col1.metric("Objects", class_data['object_count'])
+                        col2.metric("Area (px)",
+                                    f"{class_data['total_area_pixels']:,}")
+                        col3.metric("Area (%)",
+                                    f"{class_data['total_area_percent']:.2f}%")
+
+                        if class_data['objects']:
+                            obj_df = pd.DataFrame([
+                                {
+                                    'Object ID': o['id'],
+                                    'Area (px)': o['area_pixels'],
+                                    'Area (%)': f"{o['area_percent']:.3f}",
+                                    'Bounding Box': str(o['bbox'])
+                                }
+                                for o in class_data['objects']
+                            ])
+                            st.dataframe(obj_df, use_container_width=True)
 
 if __name__ == "__main__":
 
