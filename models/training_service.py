@@ -299,8 +299,8 @@ class TrainingService:
                 training_script = "/app/models/training_polygon.py"
                 print(f"🎯 POLYGON annotations detected - using polygon training script")
             elif detection['type'] == 'brush':
-                training_script = "/app/models/training_brush_minimal.py"
-                print(f"🎨 BRUSH annotations detected - using minimal brush training script")
+                training_script = "/app/models/training_brush.py"
+                print(f"🎨 BRUSH annotations detected - using brush training script")
             else:
                 # Default to brush training script for mixed/unknown types
                 training_script = "/app/models/training_brush.py"

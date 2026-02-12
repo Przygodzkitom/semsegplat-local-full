@@ -971,7 +971,7 @@ def main():
                     st.write("**Training Script:** Brush-specific (default)")
                 
                 st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
-                st.write("**Training:** 100 epochs with validation (full training)")
+                st.write("**Training:** 100 epochs with validation")
                 st.write("**Disk Space:** Only saves final model (efficient)")
                 st.write("**Progress:** Real-time updates in Streamlit")
                 st.write("**Background:** Training runs in isolated process (no VM freeze)")
@@ -981,7 +981,7 @@ def main():
                 st.write("**Annotation Type:** Will be auto-detected")
                 st.write("**Training Script:** Will be auto-selected based on annotation type")
                 st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
-                st.write("**Training:** 100 epochs with validation (full training)")
+                st.write("**Training:** 100 epochs with validation")
                 st.write("**Disk Space:** Only saves final model (efficient)")
                 st.write("**Progress:** Real-time updates in Streamlit")
                 st.write("**Background:** Training runs in isolated process (no VM freeze)")
@@ -1063,7 +1063,8 @@ def main():
             progress = status.get('progress', 0)
             progress_bar = st.progress(progress / 100)
             status_text = st.empty()
-            status_text.text(f"Training epoch {st.session_state.current_epoch}/100 ({progress:.1f}%)")
+            total_epochs = status.get('total_epochs', 100)
+            status_text.text(f"Training epoch {st.session_state.current_epoch}/{total_epochs} ({progress:.1f}%)")
             
             # Show memory and resource usage
             memory_usage = status.get('memory_usage', 0)

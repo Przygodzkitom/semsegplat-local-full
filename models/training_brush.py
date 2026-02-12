@@ -413,8 +413,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-4)
 print("✅ Universal combined loss function ready!")
 
 # --- 6. Training Loop ---
-# Adjust epochs based on device and memory constraints
-epochs = 100 if gpu_config['available'] else 30  # Reduced epochs for CPU training to prevent memory issues
+epochs = 100
 os.makedirs("models/checkpoints", exist_ok=True)
 
 print("🚀 Starting BRUSH training...")
@@ -441,63 +440,34 @@ try:
             update_progress(epoch + 1, epochs, "failed", error_msg)
             break
         
-        # Check memory usage before starting epoch
-        current_memory = get_memory_usage()
-        if current_memory > 2000:  # Stop if memory usage exceeds 2GB (more conservative)
-            error_msg = f"❌ Memory usage too high ({current_memory:.1f} MB), stopping training"
-            print(error_msg)
-            update_progress(epoch + 1, epochs, "failed", error_msg)
-            break
-            
         model.train()
         running_loss = 0.0
         batch_count = 0
 
         for batch_idx, (images, masks) in enumerate(train_loader):
             try:
-                print(f"🔍 DEBUG: Starting batch {batch_idx}/{len(train_loader)}")
-                
-                # Clear gradients before each batch
                 optimizer.zero_grad()
-                print(f"🔍 DEBUG: Gradients cleared for batch {batch_idx}")
-                
+
                 images = images.to(device)
                 masks = masks.to(device).float()
-                print(f"🔍 DEBUG: Data moved to device for batch {batch_idx}")
 
                 preds = model(images)
-                print(f"🔍 DEBUG: Forward pass completed for batch {batch_idx}")
-                
-                loss_unreduced = loss_fn(preds, masks)
-                loss = loss_unreduced # Focal loss is already reduced
-                print(f"🔍 DEBUG: Loss calculated for batch {batch_idx}: {loss.item():.4f}")
+                loss = loss_fn(preds, masks)
 
                 loss.backward()
-                print(f"🔍 DEBUG: Backward pass completed for batch {batch_idx}")
-                
                 optimizer.step()
-                print(f"🔍 DEBUG: Optimizer step completed for batch {batch_idx}")
 
-                loss_value = loss.item()  # Store the loss value before deleting the tensor
+                loss_value = loss.item()
                 running_loss += loss_value
                 batch_count += 1
 
-                # Clear intermediate tensors immediately
-                del preds, loss_unreduced, loss, images, masks
-                gc.collect()  # Garbage collect after every batch
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None  # Clear CUDA cache if available
-                print(f"🔍 DEBUG: Memory cleared for batch {batch_idx}")
+                del preds, loss, images, masks
 
-                # Print progress every batch for debugging
-                batch_msg = f"  Batch {batch_idx}/{len(train_loader)}, Loss: {loss_value:.4f}, Memory: {get_memory_usage():.1f} MB"
-                print(batch_msg)
-                update_progress(epoch + 1, epochs, "running", batch_msg)
-                
-                # Additional memory cleanup every few batches
-                if batch_idx % 2 == 0:  # Every 2 batches
-                    gc.collect()
-                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
-                    
+                if batch_idx % 5 == 0:
+                    batch_msg = f"  Batch {batch_idx}/{len(train_loader)}, Loss: {loss_value:.4f}, Memory: {get_memory_usage():.1f} MB"
+                    print(batch_msg)
+                    update_progress(epoch + 1, epochs, "running", batch_msg)
+
             except Exception as e:
                 error_msg = f"❌ Error in training batch {batch_idx}: {e}"
                 print(error_msg)

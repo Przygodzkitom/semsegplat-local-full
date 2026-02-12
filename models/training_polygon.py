@@ -426,8 +426,7 @@ optimizer = optim.Adam(model.parameters(), lr=1e-4)
 print("✅ Universal combined loss function ready!")
 
 # --- 6. Training Loop ---
-# Adjust epochs based on device
-epochs = 100 if gpu_config['available'] else 50  # More epochs for GPU training
+epochs = 100
 os.makedirs("models/checkpoints", exist_ok=True)
 
 print("🚀 Starting POLYGON training...")
