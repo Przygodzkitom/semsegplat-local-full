@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 import segmentation_models_pytorch as smp
-from utils.simple_brush_dataloader import SimpleBrushDataset
+from utils.brush_dataloader import BrushDataset
 from utils.gpu_detector import detect_gpu, get_optimal_batch_size, get_optimal_model_config, setup_environment_for_device, print_device_info
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
@@ -71,7 +71,7 @@ def check_disk_space():
         print(f"⚠️ WARNING: Disk usage is {usage:.1f}% - high!")
     return True
 
-def save_model_config(model_filename, class_names, annotation_type="brush"):
+def save_model_config(model_filename, class_names, annotation_type="brush", encoder_name=None):
     """Save model configuration alongside the model file"""
     try:
         config_filename = model_filename.replace('.pth', '_config.json')
@@ -87,10 +87,12 @@ def save_model_config(model_filename, class_names, annotation_type="brush"):
                 'annotation_prefix': ANNOTATION_PREFIX
             }
         }
-        
+        if encoder_name:
+            config['encoder_name'] = encoder_name
+
         with open(f"models/checkpoints/{config_filename}", 'w') as f:
             json.dump(config, f, indent=2)
-        
+
         print(f"✅ Model config saved as {config_filename}")
         return True
     except Exception as e:
@@ -223,7 +225,7 @@ try:
     
     print(f"🎨 Background handling: {'Explicit' if has_explicit_background else 'Implicit'}")
     
-    dataset = SimpleBrushDataset(
+    dataset = BrushDataset(
         bucket_name=BUCKET_NAME,
         img_prefix=IMG_PREFIX,
         annotation_prefix=ANNOTATION_PREFIX,
@@ -532,7 +534,7 @@ try:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"final_model_brush_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "brush")  # Save config alongside model
+        save_model_config(model_filename, class_names, "brush", model_config['encoder'])  # Save config alongside model
         final_save_msg = f"✅ Final BRUSH model saved as {model_filename}!"
         print(final_save_msg)
         update_progress(epochs, epochs, "running", final_save_msg)
@@ -558,7 +560,7 @@ except KeyboardInterrupt:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"interrupted_model_brush_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "brush")  # Save config alongside model
+        save_model_config(model_filename, class_names, "brush", model_config['encoder'])  # Save config alongside model
         save_msg = f"✅ Interrupted BRUSH model saved as {model_filename}!"
         print(save_msg)
         update_progress(epoch + 1 if 'epoch' in locals() else 0, epochs, "interrupted", save_msg)
@@ -580,7 +582,7 @@ except Exception as e:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         model_filename = f"error_model_brush_{timestamp}.pth"
         torch.save(model.state_dict(), f"models/checkpoints/{model_filename}")
-        save_model_config(model_filename, class_names, "brush")  # Save config alongside model
+        save_model_config(model_filename, class_names, "brush", model_config['encoder'])  # Save config alongside model
         save_msg = f"✅ Error BRUSH model saved as {model_filename}!"
         print(save_msg)
         update_progress(epoch + 1 if 'epoch' in locals() else 0, epochs, "failed", save_msg)

@@ -309,9 +309,7 @@ class TrainingService:
             return training_script
             
         except Exception as e:
-            print(f"⚠️ Error detecting annotation type: {e}")
-            print(f"🔄 Falling back to original training script")
-            return "/app/models/training.py"
+            raise RuntimeError(f"Failed to detect annotation type: {e}. Cannot proceed with training.")
     
     def _clear_progress(self):
         """Clear previous progress files and memory state"""

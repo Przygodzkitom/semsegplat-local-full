@@ -4,104 +4,22 @@ import numpy as np
 from tqdm import tqdm
 from models.inference_single import Inferencer
 from models.config import ModelConfig
+from label_studio_sdk.converter.brush import decode_rle
 import json
 
-def _simple_rle_to_mask(rle_data, height, width):
-    """Convert RLE (Run Length Encoding) to binary mask - using correct LabelStudio format"""
-    try:
-        print(f"🔍 DEBUG: RLE data length: {len(rle_data) if isinstance(rle_data, list) else 'N/A'}")
-        print(f"🔍 DEBUG: Target dimensions: {height}x{width}")
-        
-        # LabelStudio RLE format: [start, length, start, length, ...]
-        mask = np.zeros(height * width, dtype=np.uint8)
-        
-        if isinstance(rle_data, list) and len(rle_data) > 0:
-            print(f"🔍 DEBUG: First 20 RLE values: {rle_data[:20]}")
-            
-            # Try the standard LabelStudio RLE format first
-            if len(rle_data) % 2 == 0:
-                # Process pairs of [start, length]
-                for i in range(0, len(rle_data), 2):
-                    if i + 1 < len(rle_data):
-                        start = rle_data[i]
-                        length = rle_data[i + 1]
-                        
-                        # Validate bounds
-                        if start < len(mask) and start + length <= len(mask) and length > 0:
-                            mask[start:start + length] = 1
-                            print(f"🔍 DEBUG: Set pixels {start} to {start + length - 1}")
-                        else:
-                            print(f"⚠️ DEBUG: Invalid RLE segment - start: {start}, length: {length}, mask_size: {len(mask)}")
-            else:
-                # Handle odd-length RLE data - truncate to even length
-                print(f"🔍 DEBUG: Odd-length RLE data ({len(rle_data)}), truncating to even length")
-                even_length = len(rle_data) - 1  # Remove last element to make even
-                print(f"🔍 DEBUG: Processing {even_length} values as {even_length // 2} pairs")
-                
-                # Process pairs of [start, length] with truncated data
-                for i in range(0, even_length, 2):
-                    if i + 1 < even_length:
-                        start = rle_data[i]
-                        length = rle_data[i + 1]
-                        
-                        # Validate bounds
-                        if start < len(mask) and start + length <= len(mask) and length > 0:
-                            mask[start:start + length] = 1
-                            print(f"🔍 DEBUG: Set pixels {start} to {start + length - 1}")
-                        else:
-                            print(f"⚠️ DEBUG: Invalid RLE segment - start: {start}, length: {length}, mask_size: {len(mask)}")
-        
-        result_mask = mask.reshape(height, width)
-        non_zero = np.count_nonzero(result_mask)
-        print(f"🔍 DEBUG: RLE conversion result - shape: {result_mask.shape}, non-zero pixels: {non_zero}")
-        
-        # If no pixels were set, try alternative parsing methods
-        if non_zero == 0:
-            print("⚠️ DEBUG: No pixels set from RLE, trying alternative parsing")
-            result_mask = _alternative_rle_parsing(rle_data, height, width)
-            non_zero = np.count_nonzero(result_mask)
-            print(f"🔍 DEBUG: Alternative parsing result - non-zero pixels: {non_zero}")
-            
-            # If still no pixels, create a fallback mask
-            if non_zero == 0:
-                print("⚠️ DEBUG: All parsing methods failed, creating fallback mask")
-                center_h, center_w = height // 2, width // 2
-                size = min(height, width) // 8
-                result_mask[center_h-size:center_h+size, center_w-size:center_w+size] = 1
-                non_zero = np.count_nonzero(result_mask)
-                print(f"🔍 DEBUG: Fallback mask created with {non_zero} non-zero pixels")
-        
-        return result_mask
-        
-    except Exception as e:
-        print(f"❌ Error converting RLE to mask: {e}")
-        print(f"❌ RLE data type: {type(rle_data)}, length: {len(rle_data) if hasattr(rle_data, '__len__') else 'N/A'}")
-        import traceback
-        traceback.print_exc()
-        return np.zeros((height, width), dtype=np.uint8)
+def _rle_to_mask(rle_data, height, width):
+    """Decode Label Studio brush RLE to a binary mask.
 
-def _alternative_rle_parsing(rle_data, height, width):
-    """Alternative RLE parsing methods for different formats"""
+    Uses the canonical decoder from label_studio_sdk (same as training).
+    The RLE is a @thi.ng/rle-pack bitstream that decodes to a flat RGBA array.
+    """
     try:
-        mask = np.zeros((height, width), dtype=np.uint8)
-        total_pixels = height * width
-        
-        if isinstance(rle_data, list) and len(rle_data) > 0:
-            # Method 1: Try as compressed bitmap
-            if len(rle_data) <= total_pixels:
-                for i, val in enumerate(rle_data):
-                    if i < total_pixels:
-                        mask.flat[i] = 1 if val > 0 else 0
-            else:
-                # Method 2: Sample the data
-                step = len(rle_data) // total_pixels
-                for i in range(total_pixels):
-                    if i * step < len(rle_data):
-                        mask.flat[i] = 1 if rle_data[i * step] > 0 else 0
-        
+        flat = decode_rle(rle_data)
+        image = np.reshape(flat, [height, width, 4])
+        mask = (image[:, :, 3] > 0).astype(np.uint8)
         return mask
     except Exception as e:
-        print(f"❌ Error in alternative RLE parsing: {e}")
+        print(f"Error in RLE conversion: {e}")
         return np.zeros((height, width), dtype=np.uint8)
 
 def load_class_configuration():
@@ -131,166 +49,74 @@ def _polygon_to_mask(polygon_points, height, width):
     return np.array(img)
 
 def parse_labelstudio_annotation(annotation_data, class_names):
-    """Parse Label Studio annotation and convert to mask - using 512x512 like training"""
+    """Parse Label Studio annotation and convert to mask at original image dimensions."""
     try:
-        print(f"  🔍 DEBUG: parse_labelstudio_annotation called with class_names: {class_names}")
         result = annotation_data.get('result', [])
         if not result:
-            print("  ❌ No result in annotation data")
             return None
-        
-        print(f"  🔍 DEBUG: Found {len(result)} annotation items")
-        
-        # Check for brush vs polygon annotations
-        annotation_types = [item.get('type') for item in result]
-        print(f"  🔍 DEBUG: Annotation types found: {annotation_types}")
-        has_brush = 'brushlabels' in annotation_types
-        has_polygon = 'polygonlabels' in annotation_types
-        print(f"  🔍 DEBUG: Has brush annotations: {has_brush}, Has polygon annotations: {has_polygon}")
-        
+
         # Get image dimensions from the first annotation
         first_item = result[0]
-        original_width = first_item.get('original_width', 512)
-        original_height = first_item.get('original_height', 512)
-        
-        print(f"  🔍 DEBUG: First annotation item keys: {list(first_item.keys())}")
-        print(f"  🔍 DEBUG: original_width from annotation: {original_width}")
-        print(f"  🔍 DEBUG: original_height from annotation: {original_height}")
-        
-        # Use original dimensions to match model output size (no resizing needed)
-        target_width = original_width
-        target_height = original_height
-        
-        print(f"  📐 Original image dimensions: {original_width}x{original_height}")
-        print(f"  🎯 Target mask dimensions: {target_width}x{target_height}")
-        
-        # Create empty mask at original dimensions to match model output
+        target_width = first_item.get('original_width', 512)
+        target_height = first_item.get('original_height', 512)
+
         mask = np.zeros((target_height, target_width), dtype=np.uint8)
-        print(f"  🔍 DEBUG: Created empty mask with shape: {mask.shape}")
-        
-        # Process polygon annotations
-        for i, item in enumerate(result):
-            print(f"  🔍 DEBUG: Processing item {i}: type={item.get('type')}")
+
+        for item in result:
             if item.get('type') == 'polygonlabels':
                 value = item.get('value', {})
                 points = value.get('points', [])
-                
-                print(f"  🔍 DEBUG: Found {len(points)} polygon points")
-                print(f"  🔍 DEBUG: First few points: {points[:3] if len(points) >= 3 else points}")
-                
+
                 if points:
-                    # Convert points to polygon coordinates at target dimensions
+                    # Convert percentage coordinates to pixel coordinates
                     polygon_points = []
-                    for j, point in enumerate(points):
+                    for point in points:
                         if len(point) == 2:
-                            # Convert percentage to pixels at target dimensions
-                            x_percent = point[0]
-                            y_percent = point[1]
-                            x = int(x_percent * target_width / 100)
-                            y = int(y_percent * target_height / 100)
+                            x = int(point[0] * target_width / 100)
+                            y = int(point[1] * target_height / 100)
                             polygon_points.append((x, y))
-                            
-                            if j < 3:  # Debug first few points
-                                print(f"  🔍 DEBUG: Point {j}: {x_percent}%, {y_percent}% -> ({x}, {y})")
-                    
-                    print(f"  🔍 DEBUG: Converted to {len(polygon_points)} polygon points")
-                    
-                    # Get class label
+
                     labels = value.get('polygonlabels', [])
-                    print(f"  🔍 DEBUG: Labels found: {labels}")
-                    print(f"  🔍 DEBUG: Raw annotation value: {value}")
                     if labels:
                         class_label = labels[0]
-                        # More flexible class name matching
                         if class_label in class_names:
                             class_id = class_names.index(class_label)
-                        elif len(class_names) > 1:  # If we have object classes
-                            class_id = 1  # Use first object class (skip background)
+                        elif len(class_names) > 1:
+                            class_id = 1
                         else:
                             class_id = 1
-                        
-                        print(f"  🏷️ Processing class: {class_label} (ID: {class_id})")
-                        print(f"  🔍 DEBUG: Available class_names: {class_names}")
-                        print(f"  🔍 DEBUG: Class name matching: '{class_label}' -> class_id {class_id}")
-                        print(f"  🔍 DEBUG: Class ID {class_id} corresponds to: '{class_names[class_id] if class_id < len(class_names) else 'INVALID'}'")
-                        
-                        # Convert polygon to mask at original size
+
                         polygon_mask = _polygon_to_mask(polygon_points, target_height, target_width)
-                        print(f"  🔍 DEBUG: Polygon mask shape: {polygon_mask.shape}, unique values: {np.unique(polygon_mask)}")
-                        
-                        # Add to main mask with correct class assignment
+
                         if class_id > 0:
-                            # Create a mask with the correct class_id for this polygon
                             polygon_class_mask = polygon_mask * class_id
-                            # Use maximum to combine with existing mask (preserves multiple polygons)
                             mask = np.maximum(mask, polygon_class_mask)
                         else:
-                            # If class_id is 0 (background), just add the mask as-is
                             mask = np.maximum(mask, polygon_mask)
-                        
-                        print(f"  🔍 DEBUG: After adding polygon, mask unique values: {np.unique(mask)}")
-            
+
             elif item.get('type') == 'brushlabels':
-                # Handle brush annotations if they exist
-                print(f"  🖌️ DEBUG: Found brush annotation item")
                 value = item.get('value', {})
                 brush_data = value.get('rle', [])
                 labels = value.get('brushlabels', [])
-                
-                print(f"  🔍 DEBUG: Brush data length: {len(brush_data) if brush_data else 0}")
-                print(f"  🔍 DEBUG: Brush labels: {labels}")
-                print(f"  🔍 DEBUG: Brush value keys: {list(value.keys())}")
-                
+
                 if brush_data and labels:
-                    print(f"  🔍 DEBUG: Processing brush annotation with {len(brush_data)} RLE values")
-                    
-                    # Use the improved RLE parsing
-                    rle_mask = _simple_rle_to_mask(brush_data, target_height, target_width)
-                    
-                    # Get class label
+                    rle_mask = _rle_to_mask(brush_data, target_height, target_width)
+
                     class_label = labels[0]
-                    # More flexible class name matching
                     if class_label in class_names:
                         class_id = class_names.index(class_label)
-                    elif len(class_names) > 1:  # If we have object classes
-                        class_id = 1  # Use first object class (skip background)
+                    elif len(class_names) > 1:
+                        class_id = 1
                     else:
                         class_id = 1
-                    
-                    print(f"  🖌️ Processing brush class: {class_label} (ID: {class_id})")
-                    print(f"  🔍 DEBUG: Class name matching: '{class_label}' -> class_id {class_id}")
-                    print(f"  🔍 DEBUG: Class ID {class_id} corresponds to: '{class_names[class_id] if class_id < len(class_names) else 'INVALID'}'")
-                    print(f"  🔍 DEBUG: RLE mask shape: {rle_mask.shape}, unique values: {np.unique(rle_mask)}")
-                    
-                    # Add to main mask with correct class assignment
+
                     if class_id > 0:
-                        # Assign class_id to the brush area
-                        brush_pixels = rle_mask == 1
-                        mask[brush_pixels] = class_id
-                        print(f"  🔍 DEBUG: Assigned {np.sum(brush_pixels)} pixels to class {class_id}")
+                        mask[rle_mask == 1] = class_id
                     else:
-                        # If class_id is 0 (background), just add the mask as-is
                         mask = np.maximum(mask, rle_mask)
-                        print(f"  🔍 DEBUG: Added brush mask as background")
-                    
-                    print(f"  🔍 DEBUG: After brush processing, mask unique values: {np.unique(mask)}")
-                else:
-                    print(f"  ⚠️ DEBUG: Brush annotation missing data - brush_data: {bool(brush_data)}, labels: {bool(labels)}")
-                    if not brush_data:
-                        print(f"  ⚠️ DEBUG: No RLE data found in brush annotation")
-                    if not labels:
-                        print(f"  ⚠️ DEBUG: No labels found in brush annotation")
-        
-        print(f"  🎯 Final mask shape: {mask.shape}, unique values: {np.unique(mask)}")
-        
-        # Debug: Show mask statistics
-        if len(np.unique(mask)) > 1:
-            unique_vals, counts = np.unique(mask, return_counts=True)
-            print(f"  🔍 DEBUG: Mask value distribution: {dict(zip(unique_vals, counts))}")
-            print(f"  🔍 DEBUG: Mask percentage of class 1: {np.sum(mask == 1) / mask.size * 100:.2f}%")
-        
+
         return mask
-        
+
     except Exception as e:
         print(f"Error parsing annotation: {e}")
         import traceback
@@ -515,8 +341,7 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
                 response = s3_client.get_object(Bucket=bucket_name, Key=image_key)
                 image_data = response['Body'].read()
                 img = cv2.imdecode(np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR)
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-                
+
                 if img is None:
                     print(f"⚠️ Failed to load image: {image_key}")
                     continue
@@ -574,7 +399,7 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
                 print(f"Processing image {i+1}/{len(image_annotation_pairs)}: {os.path.basename(image_path)}")
                 
                 # Run inference using predict_and_compare (like the old working version)
-                pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask)
+                pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask, iou_threshold=0.1)
                 
                 print(f"  ✅ Inference complete: IoU={ious}")
                 
@@ -619,26 +444,37 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
             
             print(f"Mean IoU (all classes): {np.nanmean(mean_ious):.4f}")
             
-            # Calculate average object-wise metrics
+            # Calculate object-wise metrics (micro-averaged: sum TP/FP/FN across images)
             if all_metrics:
                 print("\n--- Object-wise Metrics ---")
                 avg_metrics = {}
                 for class_name in all_metrics[0].keys():
+                    total_tp = sum(m[class_name]['tp'] for m in all_metrics)
+                    total_fp = sum(m[class_name]['fp'] for m in all_metrics)
+                    total_fn = sum(m[class_name]['fn'] for m in all_metrics)
+                    total_pred = sum(m[class_name].get('n_pred_objects', 0) for m in all_metrics)
+                    total_gt = sum(m[class_name].get('n_gt_objects', 0) for m in all_metrics)
+
+                    precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                    recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                    f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
                     avg_metrics[class_name] = {
-                        'precision': np.mean([m[class_name]['precision'] for m in all_metrics]),
-                        'recall': np.mean([m[class_name]['recall'] for m in all_metrics]),
-                        'f1': np.mean([m[class_name]['f1'] for m in all_metrics])
+                        'precision': precision,
+                        'recall': recall,
+                        'f1': f1,
                     }
-                    print(f"{class_name}:")
-                    print(f"  Precision: {avg_metrics[class_name]['precision']:.4f}")
-                    print(f"  Recall: {avg_metrics[class_name]['recall']:.4f}")
-                    print(f"  F1-Score: {avg_metrics[class_name]['f1']:.4f}")
-                
+                    print(f"{class_name}: ({total_pred} predicted, {total_gt} GT objects)")
+                    print(f"  TP={total_tp}, FP={total_fp}, FN={total_fn}")
+                    print(f"  Precision: {precision:.4f}")
+                    print(f"  Recall: {recall:.4f}")
+                    print(f"  F1-Score: {f1:.4f}")
+
                 results['avg_metrics'] = avg_metrics
         else:
             print("No valid image-annotation pairs found for evaluation.")
             results['status'] = 'no_data'
-        
+
         # Add debug info to results
         results['debug_info'] = debug_info
         
@@ -863,55 +699,20 @@ def batch_evaluate_with_labelstudio_export(export_file_path, model_path, bucket_
     all_ious = []
     all_metrics = []
 
-    print(f"🔍 DEBUG: About to process {len(image_annotation_pairs)} image-annotation pairs")
-    print(f"🔍 DEBUG: First few pairs: {image_annotation_pairs[:2] if image_annotation_pairs else 'No pairs'}")
-
     for img_key, annotation_data in tqdm(image_annotation_pairs, desc="Evaluating"):
         try:
-            print(f"🔄 Processing: {os.path.basename(img_key)}")
-            print(f"  🔍 DEBUG: Full image key: {img_key}")
-            
             # Load image from MinIO
-            print(f"  🔍 DEBUG: Loading image from MinIO: {img_key}")
             response = s3_client.get_object(Bucket=bucket_name, Key=img_key)
             image_data = response['Body'].read()
             img = cv2.imdecode(np.frombuffer(image_data, np.uint8), cv2.IMREAD_COLOR)
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            
-            print(f"  📸 Image loaded: {img.shape}")
-            print(f"  🔍 DEBUG: Image dtype: {img.dtype}, min/max values: {img.min()}/{img.max()}")
-            print(f"  🔍 DEBUG: Image filename: {os.path.basename(img_key)}")
-            
-            # Parse annotation data (already loaded from export file)
-            print(f"  🔍 DEBUG: About to parse annotation data...")
-            print(f"  🔍 DEBUG: class_names being passed to parse_labelstudio_annotation: {class_names}")
+
             gt_mask = parse_labelstudio_annotation(annotation_data, class_names)
-            print(f"  🔍 DEBUG: Annotation parsing complete, gt_mask: {gt_mask.shape if gt_mask is not None else 'None'}")
-            
+
             if img is None or gt_mask is None:
-                print(f"❌ Skipping {img_key}: missing image or annotation.")
+                print(f"Skipping {img_key}: missing image or annotation.")
                 continue
 
-            print(f"  🤖 Running inference...")
-            print(f"  🔍 About to call predict_and_compare with img shape: {img.shape}, gt_mask shape: {gt_mask.shape}")
-            print(f"  🔍 DEBUG: Image dimensions: {img.shape[1]}x{img.shape[0]} (WxH)")
-            print(f"  🔍 DEBUG: GT mask dimensions: {gt_mask.shape[1]}x{gt_mask.shape[0]} (WxH)")
-            print(f"  🔍 DEBUG: GT mask unique values: {np.unique(gt_mask)}")
-            
-            pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask)
-            print(f"  ✅ Inference complete: IoU={ious}")
-            print(f"  🔍 Returned pred_mask shape: {pred_mask.shape}, ious: {ious}, metrics keys: {list(metrics.keys()) if metrics else 'None'}")
-            print(f"  🔍 DEBUG: Final pred_mask unique values: {np.unique(pred_mask)}")
-            
-            # Print individual image results
-            print(f"  📊 Individual Results for {os.path.basename(img_key)}:")
-            for i, iou in enumerate(ious):
-                class_name = class_names[i] if i < len(class_names) else f"Class {i}"
-                print(f"    {class_name}: IoU = {iou:.4f}")
-            
-            if metrics:
-                for class_name, class_metrics in metrics.items():
-                    print(f"    {class_name}: Precision={class_metrics.get('precision', 0):.4f}, Recall={class_metrics.get('recall', 0):.4f}, F1={class_metrics.get('f1', 0):.4f}")
+            pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.1)
             
             all_ious.append(ious)
             all_metrics.append(metrics)
@@ -955,26 +756,37 @@ def batch_evaluate_with_labelstudio_export(export_file_path, model_path, bucket_
         
         print(f"Mean IoU (all classes): {np.nanmean(mean_ious):.4f}")
         
-        # Calculate average object-wise metrics
+        # Calculate object-wise metrics (micro-averaged: sum TP/FP/FN across images)
         if all_metrics:
             print("\n--- Object-wise Metrics ---")
             avg_metrics = {}
             for class_name in all_metrics[0].keys():
+                total_tp = sum(m[class_name]['tp'] for m in all_metrics)
+                total_fp = sum(m[class_name]['fp'] for m in all_metrics)
+                total_fn = sum(m[class_name]['fn'] for m in all_metrics)
+                total_pred = sum(m[class_name].get('n_pred_objects', 0) for m in all_metrics)
+                total_gt = sum(m[class_name].get('n_gt_objects', 0) for m in all_metrics)
+
+                precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+                recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+                f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
                 avg_metrics[class_name] = {
-                    'precision': np.mean([m[class_name]['precision'] for m in all_metrics]),
-                    'recall': np.mean([m[class_name]['recall'] for m in all_metrics]),
-                    'f1': np.mean([m[class_name]['f1'] for m in all_metrics])
+                    'precision': precision,
+                    'recall': recall,
+                    'f1': f1,
                 }
-                print(f"{class_name}:")
-                print(f"  Precision: {avg_metrics[class_name]['precision']:.4f}")
-                print(f"  Recall: {avg_metrics[class_name]['recall']:.4f}")
-                print(f"  F1-Score: {avg_metrics[class_name]['f1']:.4f}")
-            
+                print(f"{class_name}: ({total_pred} predicted, {total_gt} GT objects)")
+                print(f"  TP={total_tp}, FP={total_fp}, FN={total_fn}")
+                print(f"  Precision: {precision:.4f}")
+                print(f"  Recall: {recall:.4f}")
+                print(f"  F1-Score: {f1:.4f}")
+
             results['avg_metrics'] = avg_metrics
     else:
         print("No valid image-annotation pairs found for evaluation.")
         results['status'] = 'no_data'
-    
+
     # Add debug info to results
     results['debug_info'] = debug_info
     
@@ -1008,7 +820,7 @@ def batch_evaluate(image_dir, mask_dir, model_path, num_classes=None, threshold=
             print(f"Skipping {img_name}: missing image or mask.")
             continue
 
-        pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask)
+        pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.1)
         all_ious.append(ious)
         all_metrics.append(metrics)
 
@@ -1025,20 +837,31 @@ def batch_evaluate(image_dir, mask_dir, model_path, num_classes=None, threshold=
     
     print(f"Mean IoU (all classes): {np.nanmean(mean_ious):.4f}")
     
-    # Calculate average object-wise metrics
+    # Calculate object-wise metrics (micro-averaged: sum TP/FP/FN across images)
     if all_metrics:
         print("\n--- Object-wise Metrics ---")
         avg_metrics = {}
         for class_name in all_metrics[0].keys():
+            total_tp = sum(m[class_name]['tp'] for m in all_metrics)
+            total_fp = sum(m[class_name]['fp'] for m in all_metrics)
+            total_fn = sum(m[class_name]['fn'] for m in all_metrics)
+            total_pred = sum(m[class_name].get('n_pred_objects', 0) for m in all_metrics)
+            total_gt = sum(m[class_name].get('n_gt_objects', 0) for m in all_metrics)
+
+            precision = total_tp / (total_tp + total_fp) if (total_tp + total_fp) > 0 else 0.0
+            recall = total_tp / (total_tp + total_fn) if (total_tp + total_fn) > 0 else 0.0
+            f1 = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+
             avg_metrics[class_name] = {
-                'precision': np.mean([m[class_name]['precision'] for m in all_metrics]),
-                'recall': np.mean([m[class_name]['recall'] for m in all_metrics]),
-                'f1': np.mean([m[class_name]['f1'] for m in all_metrics])
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
             }
-            print(f"{class_name}:")
-            print(f"  Precision: {avg_metrics[class_name]['precision']:.4f}")
-            print(f"  Recall: {avg_metrics[class_name]['recall']:.4f}")
-            print(f"  F1-Score: {avg_metrics[class_name]['f1']:.4f}")
+            print(f"{class_name}: ({total_pred} predicted, {total_gt} GT objects)")
+            print(f"  TP={total_tp}, FP={total_fp}, FN={total_fn}")
+            print(f"  Precision: {precision:.4f}")
+            print(f"  Recall: {recall:.4f}")
+            print(f"  F1-Score: {f1:.4f}")
 
 if __name__ == "__main__":
     # Example usage for Label Studio annotations
