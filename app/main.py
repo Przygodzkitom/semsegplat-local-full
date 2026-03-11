@@ -18,7 +18,7 @@ from models.inference_single import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
 from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
-from app.image_utils import process_uploaded_images, get_supported_formats, format_file_size, estimate_conversion_time
+from app.image_utils import process_uploaded_images, get_supported_formats, format_file_size, estimate_conversion_time, convert_to_png, detect_image_format
 from models.batch_analysis import analyze_single_image, create_analysis_overlay, aggregate_batch_results
 
 # Configure resource limits and memory management
@@ -1272,7 +1272,9 @@ def main():
             st.stop()
 
         # File uploaders
-        uploaded_image = st.file_uploader("Image", type=["jpg", "png"], key="image_uploader")
+        st.info(f"Supported formats: {', '.join(get_supported_formats()).upper()}. Non-PNG images will be automatically converted.")
+        uploaded_image = st.file_uploader("Image", type=get_supported_formats(), key="image_uploader",
+                                          help="Upload an image in any supported format. Non-PNG images will be automatically converted to PNG.")
         
         # GT mask options
         st.subheader("Evaluation Mode")
@@ -1357,8 +1359,15 @@ def main():
             results_container = st.container()
             
             with results_container:
-                # Process image
-                image_bytes = uploaded_image.read()
+                # Convert to PNG if needed
+                detected_format, _ = detect_image_format(uploaded_image)
+                if detected_format not in ['PNG', 'UNKNOWN']:
+                    st.info(f"Converting {uploaded_image.name} from {detected_format} to PNG...")
+                    converted_data, _ = convert_to_png(uploaded_image)
+                    image_bytes = converted_data.read()
+                    st.success(f"Converted to PNG successfully")
+                else:
+                    image_bytes = uploaded_image.read()
                 image = process_image(image_bytes)
 
                 if gt_option == "No GT (inference only)":
@@ -1429,11 +1438,13 @@ def main():
 
         # File upload
         st.subheader("Upload Images for Analysis")
+        st.info(f"Supported formats: {', '.join(get_supported_formats()).upper()}. Non-PNG images will be automatically converted.")
         uploaded_files = st.file_uploader(
             "Choose images",
             accept_multiple_files=True,
-            type=['png', 'jpg', 'jpeg', 'bmp', 'tif', 'tiff'],
-            key="ba_file_uploader"
+            type=get_supported_formats(),
+            key="ba_file_uploader",
+            help="Upload images in any supported format. Non-PNG images will be automatically converted to PNG before analysis."
         )
 
         if uploaded_files:
@@ -1476,6 +1487,7 @@ def main():
 
                 progress = st.progress(0)
                 status = st.empty()
+                converted_count = 0
 
                 for idx, uploaded_file in enumerate(uploaded_files):
                     status.text(
@@ -1484,7 +1496,13 @@ def main():
                     )
 
                     try:
-                        file_bytes = uploaded_file.read()
+                        detected_format, _ = detect_image_format(uploaded_file)
+                        if detected_format not in ['PNG', 'UNKNOWN']:
+                            converted_data, _ = convert_to_png(uploaded_file)
+                            file_bytes = converted_data.read()
+                            converted_count += 1
+                        else:
+                            file_bytes = uploaded_file.read()
                         image = cv2.imdecode(
                             np.frombuffer(file_bytes, np.uint8), 1
                         )
@@ -1524,6 +1542,8 @@ def main():
 
                 status.text("Analysis complete!")
                 progress.progress(1.0)
+                if converted_count > 0:
+                    st.info(f"Converted {converted_count} image(s) to PNG before analysis.")
 
                 # Store results in session state
                 st.session_state.ba_results = all_results
