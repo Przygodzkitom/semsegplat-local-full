@@ -92,8 +92,8 @@ def test_environment():
     
     # Check if required files exist
     required_files = [
-        'models/training_brush_minimal.py',
-        'models/utils/simple_brush_dataloader.py',
+        'models/training_brush.py',
+        'models/utils/brush_dataloader.py',
         'models/utils/annotation_type_detector.py'
     ]
     

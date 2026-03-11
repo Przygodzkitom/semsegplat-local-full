@@ -1,46 +1,49 @@
+#!/usr/bin/env python3
+"""
+Brush Data Loader for Label Studio
+Downloads images and converts RLE annotations to PNG masks once,
+caches them locally, and reads from disk during training.
+"""
+
 import os
 import cv2
 import numpy as np
 import json
+import hashlib
 from torch.utils.data import Dataset
 from PIL import Image, ImageDraw
 import boto3
 from botocore.exceptions import ClientError
+from label_studio_sdk.converter.brush import decode_rle
 
-class LabelStudioBrushDataset(Dataset):
+# Local directory to cache converted images and masks
+CACHE_DIR = os.path.join(os.path.dirname(__file__), '..', 'brush_cache')
+
+# Bump this version whenever the RLE decoder changes to auto-invalidate cached masks.
+CACHE_VERSION = "4"
+
+
+class BrushDataset(Dataset):
     """
-    Enhanced MinIO-based dataset for Label Studio BRUSH annotations
-    Handles both explicit and implicit background class definitions
+    Brush dataset that caches images and decoded masks as local PNG files.
+    First run: fetches from MinIO, decodes RLE, saves PNGs.
+    Subsequent runs: loads directly from disk.
     """
-    
-    def __init__(self, bucket_name, img_prefix="images/", annotation_prefix="annotations/", 
-                 transform=None, multilabel=True, class_names=None, has_explicit_background=True):
-        """
-        Initialize MinIO-based dataset for brush annotations
-        
-        Args:
-            bucket_name: MinIO bucket name
-            img_prefix: Prefix for images in the bucket
-            annotation_prefix: Prefix for annotations in the bucket
-            transform: Albumentations transform
-            multilabel: Whether to use multilabel format
-            class_names: List of class names
-            has_explicit_background: Whether background is explicitly defined in annotations
-        """
+
+    def __init__(self, bucket_name, img_prefix="images/", annotation_prefix="annotations/",
+                 transform=None, multilabel=True, class_names=None, **kwargs):
         self.bucket_name = bucket_name
         self.img_prefix = img_prefix
         self.annotation_prefix = annotation_prefix
         self.transform = transform
         self.multilabel = multilabel
         self.class_names = class_names or ["Object"]
-        self.has_explicit_background = has_explicit_background
-        
+
         # MinIO configuration
         self.endpoint_url = os.getenv('MINIO_ENDPOINT', 'http://localhost:9000')
         self.access_key = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
         self.secret_key = os.getenv('MINIO_SECRET_KEY', 'minioadmin123')
-        
-        # Initialize MinIO client
+
         self.s3_client = boto3.client(
             's3',
             endpoint_url=self.endpoint_url,
@@ -48,257 +51,244 @@ class LabelStudioBrushDataset(Dataset):
             aws_secret_access_key=self.secret_key,
             region_name='us-east-1'
         )
-        
-        # Load image-annotation pairs
-        self.image_annotation_pairs = self._load_image_annotation_pairs()
-        
-        if len(self.image_annotation_pairs) == 0:
+
+        # Set up local cache directory
+        self.cache_dir = os.path.abspath(CACHE_DIR)
+        self.images_dir = os.path.join(self.cache_dir, 'images')
+        self.masks_dir = os.path.join(self.cache_dir, 'masks')
+        os.makedirs(self.images_dir, exist_ok=True)
+        os.makedirs(self.masks_dir, exist_ok=True)
+        self._check_cache_version()
+
+        # Build the dataset: fetch pairs, convert, and cache
+        raw_pairs = self._load_image_annotation_pairs()
+        if len(raw_pairs) == 0:
             raise ValueError(f"No image-annotation pairs found in bucket {bucket_name}")
-        
-        print(f"✅ Loaded {len(self.image_annotation_pairs)} image-annotation pairs for BRUSH annotations")
-        print(f"🎨 Background handling: {'Explicit' if has_explicit_background else 'Implicit'}")
-    
+
+        print(f"Found {len(raw_pairs)} image-annotation pairs for BRUSH annotations")
+        print(f"Background handling: unpainted pixels treated as background")
+
+        self.samples = self._prepare_cache(raw_pairs)
+
+        if len(self.samples) == 0:
+            raise ValueError("No samples could be prepared from annotations")
+
+        print(f"Dataset ready: {len(self.samples)} samples (cached in {self.cache_dir})")
+
+    # ------------------------------------------------------------------
+    # MinIO loading (only used during cache preparation)
+    # ------------------------------------------------------------------
+
     def _load_image_annotation_pairs(self):
-        """Load image-annotation pairs from MinIO"""
         pairs = []
-        
         try:
-            # Get all annotation files
             response = self.s3_client.list_objects_v2(
-                Bucket=self.bucket_name,
-                Prefix=self.annotation_prefix
+                Bucket=self.bucket_name, Prefix=self.annotation_prefix
             )
-            
             if 'Contents' not in response:
                 print(f"No annotations found in {self.annotation_prefix}")
                 return pairs
-            
+
             for obj in response['Contents']:
-                # Skip directory placeholders and only accept actual files
                 if obj['Key'].endswith('/') or obj['Size'] == 0:
                     continue
-                
-                # Accept files without extensions (Label Studio format)
-                if not '.' in obj['Key'].split('/')[-1]:
+                if '.' not in obj['Key'].split('/')[-1]:
                     annotation_key = obj['Key']
-                    
-                    # Load annotation to get image path
                     annotation_data = self._load_annotation_from_minio(annotation_key)
                     if annotation_data and 'task' in annotation_data:
                         task_data = annotation_data['task'].get('data', {})
                         image_path = task_data.get('image', '')
-                        
-                        # Extract image key from S3 URL
                         if image_path.startswith('s3://'):
-                            # Remove s3://bucket_name/ prefix
                             image_key = image_path.replace(f's3://{self.bucket_name}/', '')
-                            
-                            # Check if image exists
                             try:
                                 self.s3_client.head_object(Bucket=self.bucket_name, Key=image_key)
                                 pairs.append((image_key, annotation_key))
-                            except:
-                                print(f"⚠️ Image not found: {image_key}")
-                                continue
-            
-            return pairs
-            
+                            except Exception:
+                                print(f"Image not found: {image_key}")
         except Exception as e:
             print(f"Error loading image-annotation pairs: {e}")
-            return pairs
-    
-    def _load_image_from_minio(self, image_key):
-        """Load image from MinIO"""
-        try:
-            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=image_key)
-            image_data = response['Body'].read()
-            
-            # Convert to numpy array
-            nparr = np.frombuffer(image_data, np.uint8)
-            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            
-            if image is None:
-                print(f"Could not decode image: {image_key}")
-                return None
-            
-            # Convert BGR to RGB
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-            return image
-            
-        except Exception as e:
-            print(f"Error loading image from MinIO {image_key}: {e}")
-            return None
-    
+        return pairs
+
     def _load_annotation_from_minio(self, annotation_key):
-        """Load annotation from MinIO"""
         try:
             response = self.s3_client.get_object(Bucket=self.bucket_name, Key=annotation_key)
-            annotation_data = response['Body'].read().decode('utf-8')
-            return json.loads(annotation_data)
-            
+            return json.loads(response['Body'].read().decode('utf-8'))
         except Exception as e:
-            print(f"Error loading annotation from MinIO {annotation_key}: {e}")
+            print(f"Error loading annotation {annotation_key}: {e}")
             return None
-    
+
+    def _load_image_from_minio(self, image_key):
+        try:
+            response = self.s3_client.get_object(Bucket=self.bucket_name, Key=image_key)
+            nparr = np.frombuffer(response['Body'].read(), np.uint8)
+            image = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if image is None:
+                return None
+            return cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        except Exception as e:
+            print(f"Error loading image {image_key}: {e}")
+            return None
+
+    # ------------------------------------------------------------------
+    # Cache preparation
+    # ------------------------------------------------------------------
+
+    def _check_cache_version(self):
+        """Invalidate cached masks when the RLE decoder changes."""
+        import shutil
+        version_file = os.path.join(self.cache_dir, 'VERSION')
+        current = ''
+        if os.path.exists(version_file):
+            with open(version_file) as f:
+                current = f.read().strip()
+        if current != CACHE_VERSION:
+            # Purge only masks (images are decoded from source, not RLE)
+            if os.path.exists(self.masks_dir):
+                shutil.rmtree(self.masks_dir)
+                os.makedirs(self.masks_dir, exist_ok=True)
+                print(f"Cache version changed ({current!r} -> {CACHE_VERSION!r}), cleared mask cache")
+            with open(version_file, 'w') as f:
+                f.write(CACHE_VERSION)
+
+    def _sample_id(self, image_key):
+        """Deterministic short ID from the image key."""
+        return hashlib.md5(image_key.encode()).hexdigest()[:12]
+
+    def _prepare_cache(self, raw_pairs):
+        """Convert and cache all images/masks as local PNGs. Skip if already cached."""
+        samples = []
+        cached_count = 0
+
+        for idx, (image_key, annotation_key) in enumerate(raw_pairs):
+            sid = self._sample_id(image_key)
+            img_path = os.path.join(self.images_dir, f'{sid}.png')
+            mask_path = os.path.join(self.masks_dir, f'{sid}.png')
+
+            if os.path.exists(img_path) and os.path.exists(mask_path):
+                samples.append((img_path, mask_path))
+                cached_count += 1
+                continue
+
+            # Download and convert
+            image = self._load_image_from_minio(image_key)
+            if image is None:
+                print(f"Skipping {image_key}: could not load image")
+                continue
+
+            image = cv2.resize(image, (512, 512))
+
+            annotation_data = self._load_annotation_from_minio(annotation_key)
+            mask = self._parse_brush_annotation(annotation_data)
+            if mask is None:
+                mask = np.zeros((512, 512), dtype=np.uint8)
+
+            # Save as PNG (lossless)
+            cv2.imwrite(img_path, cv2.cvtColor(image, cv2.COLOR_RGB2BGR))
+            cv2.imwrite(mask_path, mask)
+            samples.append((img_path, mask_path))
+
+            if (idx + 1) % 10 == 0 or idx == len(raw_pairs) - 1:
+                print(f"  Prepared {idx + 1}/{len(raw_pairs)}")
+
+        if cached_count == len(raw_pairs):
+            print(f"All {cached_count} samples loaded from cache")
+        elif cached_count > 0:
+            print(f"Loaded {cached_count} from cache, converted {len(samples) - cached_count} new")
+
+        return samples
+
+    # ------------------------------------------------------------------
+    # RLE parsing (only used during cache preparation)
+    # ------------------------------------------------------------------
+
     def _parse_brush_annotation(self, annotation_data):
-        """Parse Label Studio brush annotation and create mask"""
         try:
             if not annotation_data or 'result' not in annotation_data:
                 return None
-            
-            # Get image dimensions from annotation
+
             result = annotation_data['result']
             if not result:
                 return None
-            
-            # Get dimensions from first result
+
             first_result = result[0]
             original_width = first_result.get('original_width', 512)
             original_height = first_result.get('original_height', 512)
-            
-            # Create empty mask
-            mask = np.zeros((original_height, original_width), dtype=np.uint8)
-            
-            # Process each annotation result
+
+            mask = np.full((original_height, original_width), 255, dtype=np.uint8)
+
             for item in result:
                 if item.get('type') == 'brushlabels':
                     value = item.get('value', {})
                     brush_data = value.get('rle', [])
                     labels = value.get('brushlabels', [])
-                    
-                    print(f"🔍 DEBUG: Found brush annotation - RLE length: {len(brush_data)}, Labels: {labels}")
-                    
+
                     if brush_data and labels:
-                        # Convert RLE to mask
                         rle_mask = self._rle_to_mask(brush_data, original_height, original_width)
-                        
-                        # Get class ID
                         class_label = labels[0]
-                        if class_label in self.class_names:
-                            class_id = self.class_names.index(class_label)
-                        else:
-                            # If class not in our list, assign to first available class
-                            class_id = 0
-                        
-                        print(f"🔍 DEBUG: Class '{class_label}' -> ID {class_id}, Mask shape: {rle_mask.shape}, Non-zero pixels: {np.count_nonzero(rle_mask)}")
-                        
-                        # Add to mask
-                        mask = np.maximum(mask, rle_mask * class_id)
-            
+                        class_id = self.class_names.index(class_label) if class_label in self.class_names else 0
+                        mask[rle_mask == 1] = class_id
+
             return mask
-            
+
         except Exception as e:
             print(f"Error parsing brush annotation: {e}")
             return None
-    
+
     def _rle_to_mask(self, rle_data, height, width):
-        """Convert RLE (Run Length Encoding) to binary mask"""
+        """Decode Label Studio brush RLE to a binary mask.
+
+        Uses the canonical decoder from label_studio_sdk.converter.brush.
+        The RLE is a bitstream-based encoding (@thi.ng/rle-pack) that
+        decodes to a flat RGBA byte array (H * W * 4).
+        """
         try:
-            # LabelStudio brush RLE format is complex - let's use a more robust approach
-            mask = np.zeros(height * width, dtype=np.uint8)
-            
-            if isinstance(rle_data, list) and len(rle_data) > 0:
-                print(f"🔍 DEBUG: RLE data length: {len(rle_data)}, first 20 values: {rle_data[:20]}")
-                
-                # Try to decode as a simple binary mask first
-                # If the RLE data is too complex, we'll create a simple mask
-                total_pixels = height * width
-                
-                if len(rle_data) <= total_pixels:
-                    # If RLE data is shorter than total pixels, it's likely compressed
-                    # For now, create a simple mask based on the data
-                    # This is a fallback - we'll need to improve this later
-                    
-                    # Create a simple pattern based on the RLE data
-                    # This is not perfect but will give us something to work with
-                    for i, val in enumerate(rle_data):
-                        if i < total_pixels:
-                            # Convert any non-zero value to 1
-                            mask[i] = 1 if val > 0 else 0
-                else:
-                    # If RLE data is longer than total pixels, truncate it
-                    for i in range(total_pixels):
-                        if i < len(rle_data):
-                            mask[i] = 1 if rle_data[i] > 0 else 0
-            
-            result_mask = mask.reshape(height, width)
-            non_zero = np.count_nonzero(result_mask)
-            print(f"🔍 DEBUG: RLE conversion result - shape: {result_mask.shape}, non-zero pixels: {non_zero}")
-            
-            # Limit the number of non-zero pixels to prevent overflow
-            if non_zero > total_pixels * 0.8:  # If more than 80% of pixels are non-zero
-                print(f"⚠️ Too many non-zero pixels ({non_zero}), limiting to 50%")
-                # Create a more reasonable mask
-                result_mask = np.zeros((height, width), dtype=np.uint8)
-                # Add some random regions to simulate brush strokes
-                center_h, center_w = height // 2, width // 2
-                size = min(height, width) // 4
-                result_mask[center_h-size:center_h+size, center_w-size:center_w+size] = 1
-                non_zero = np.count_nonzero(result_mask)
-                print(f"🔍 DEBUG: Created fallback mask with {non_zero} non-zero pixels")
-            
-            return result_mask
-            
+            flat = decode_rle(rle_data)
+            image = np.reshape(flat, [height, width, 4])
+            mask = (image[:, :, 3] > 0).astype(np.uint8)
+            return mask
         except Exception as e:
-            print(f"Error converting RLE to mask: {e}")
-            print(f"RLE data type: {type(rle_data)}, length: {len(rle_data) if hasattr(rle_data, '__len__') else 'N/A'}")
+            print(f"Error in RLE conversion: {e}")
             return np.zeros((height, width), dtype=np.uint8)
-    
+
+    # ------------------------------------------------------------------
+    # Dataset interface
+    # ------------------------------------------------------------------
+
     def __len__(self):
-        return len(self.image_annotation_pairs)
-    
+        return len(self.samples)
+
     def __getitem__(self, idx):
-        img_key, annotation_key = self.image_annotation_pairs[idx]
-        
-        # Load image from MinIO
-        image = self._load_image_from_minio(img_key)
-        if image is None:
-            raise ValueError(f"Could not load image: {img_key}")
-        
-        # Load and parse annotation from MinIO
-        annotation_data = self._load_annotation_from_minio(annotation_key)
-        mask = self._parse_brush_annotation(annotation_data)
-        if mask is None:
-            # Create empty mask at target size if no annotation
-            mask = np.zeros((512, 512), dtype=np.uint8)
-        
-        # Resize image to match mask dimensions (512x512) - ensure consistency
-        image = cv2.resize(image, (512, 512))
-        
+        img_path, mask_path = self.samples[idx]
+
+        # Read from local disk (fast)
+        image = cv2.imread(img_path, cv2.IMREAD_COLOR)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+
         # Convert to multilabel format if needed
         if self.multilabel:
             h, w = mask.shape
             num_classes = len(self.class_names)
             multilabel_mask = np.zeros((num_classes, h, w), dtype=np.float32)
-            
-            if self.has_explicit_background:
-                # Background is explicitly defined in annotations
-                for i, class_name in enumerate(self.class_names):
-                    multilabel_mask[i] = (mask == i).astype(np.float32)
-            else:
-                # No explicit background - all unlabeled areas are background
-                # First class is background (unlabeled areas)
-                multilabel_mask[0] = (mask == 0).astype(np.float32)
-                
-                # Other classes are labeled areas
-                for i, class_name in enumerate(self.class_names[1:], 1):
-                    multilabel_mask[i] = (mask == i).astype(np.float32)
-            
+
+            # Object classes from painted pixels
+            for i in range(1, num_classes):
+                multilabel_mask[i] = (mask == i).astype(np.float32)
+
+            # Background = everything not painted as an object
+            # (includes unpainted pixels (255) and explicitly painted background (0))
+            object_union = multilabel_mask[1:].max(axis=0)
+            multilabel_mask[0] = 1.0 - object_union
+
             mask = multilabel_mask.transpose(1, 2, 0)  # (H, W, C) for albumentations
-        
+
         # Apply transforms
         if self.transform:
-            try:
-                augmented = self.transform(image=image, mask=mask)
-                image = augmented["image"]
-                
-                if self.multilabel:
-                    mask = augmented["mask"].permute(2, 0, 1)  # (C, H, W) for PyTorch
-                else:
-                    mask = augmented["mask"].unsqueeze(0)  # (1, H, W)
-            except Exception as e:
-                print(f"❌ Transform error: {e}")
-                print(f"❌ Image shape: {image.shape}, Mask shape: {mask.shape}")
-                raise e
-        
+            augmented = self.transform(image=image, mask=mask)
+            image = augmented["image"]
+            if self.multilabel:
+                mask = augmented["mask"].permute(2, 0, 1)  # (C, H, W) for PyTorch
+            else:
+                mask = augmented["mask"].unsqueeze(0)
+
         return image, mask

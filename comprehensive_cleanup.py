@@ -159,6 +159,15 @@ class ImprovedComprehensiveCleanup:
                     self.log(f"⚠️ Error clearing saved models: {e}", "WARN")
         else:
             self.log("ℹ️ Preserving model checkpoints (use --clear-models to remove them)")
+
+        # Always clear brush cache (regenerated from annotations on next training)
+        brush_cache_dir = "models/brush_cache"
+        if os.path.exists(brush_cache_dir):
+            try:
+                shutil.rmtree(brush_cache_dir)
+                self.log("✅ Cleared brush annotation cache")
+            except Exception as e:
+                self.log(f"⚠️ Error clearing brush cache: {e}", "WARN")
     
     def clear_config_files(self):
         """Clear configuration files"""
@@ -307,12 +316,16 @@ class ImprovedComprehensiveCleanup:
         else:
             self.log("✅ MinIO annotations cleared")
         
-        # Check for any remaining data files
+        # Check for any remaining data files (skip project root and known non-data dirs)
+        excluded_dirs = {'minio-data', 'app', '.git', 'models', 'label-studio-data'}
         data_files = []
         for root, dirs, files in os.walk("."):
+            # Skip excluded directories in-place
+            dirs[:] = [d for d in dirs if d not in excluded_dirs]
+            if root == '.':
+                continue
             for file in files:
-                if (file.endswith(('.png', '.jpg', '.jpeg')) and 
-                    'minio-data' not in root and 'app' not in root):
+                if file.endswith(('.png', '.jpg', '.jpeg')):
                     data_files.append(os.path.join(root, file))
         
         if data_files:

@@ -1,6 +1,7 @@
 import os
 import io
 from PIL import Image
+import numpy as np
 import streamlit as st
 from typing import Tuple, Optional, List
 import mimetypes
@@ -52,8 +53,19 @@ def convert_to_png(file_data, quality: int = 95) -> Tuple[io.BytesIO, str]:
         
         # Open image with PIL
         with Image.open(file_data) as img:
-            # Convert RGBA to RGB if necessary (PNG supports RGBA, but some formats don't)
-            if img.mode == 'RGBA':
+            # Normalize high bit-depth images (16-bit / 32-bit / float TIFFs).
+            # PIL stores these as mode 'I' (32-bit int) or 'F' (float32).
+            # Direct conversion to 8-bit without normalization makes dim images
+            # appear blank or black because their small value range maps to ~0.
+            if img.mode in ('I', 'F'):
+                arr = np.array(img, dtype=np.float32)
+                mn, mx = arr.min(), arr.max()
+                if mx > mn:
+                    arr = ((arr - mn) / (mx - mn) * 255.0).astype(np.uint8)
+                else:
+                    arr = np.zeros(arr.shape, dtype=np.uint8)
+                img = Image.fromarray(arr, mode='L')
+            elif img.mode == 'RGBA':
                 # Create white background
                 background = Image.new('RGB', img.size, (255, 255, 255))
                 background.paste(img, mask=img.split()[-1])  # Use alpha channel as mask

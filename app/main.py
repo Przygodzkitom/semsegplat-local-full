@@ -226,6 +226,14 @@ def main():
         supported_formats = get_supported_formats()
         st.info(f"Supported formats: {', '.join(supported_formats).upper()}")
         st.info("Non-PNG images will be automatically converted to PNG format for Label Studio compatibility")
+        st.warning(
+            "**Note on automatic conversion:** While the app can convert most formats to PNG, "
+            "some images may not convert correctly — in particular **dim or low-contrast TIFFs** "
+            "(e.g. microscopy, scientific, or HDR images) where the automatic brightness normalization "
+            "may not match your expectations. "
+            "For best results, **convert your images to PNG manually before uploading** "
+            "(e.g. using ImageJ, FIJI, or any image editor) so you can verify they look correct."
+        )
         
         # File uploader with expanded format support
         uploaded_files = st.file_uploader(
@@ -239,14 +247,7 @@ def main():
         if uploaded_files and len(uploaded_files) > 50:
             st.warning(f" **Large batch detected:** {len(uploaded_files)} files. Processing may take several minutes. Consider processing in smaller batches for better performance.")
         
-        # Check if we already processed these files to prevent infinite loop
-        if 'uploaded_files' in st.session_state and st.session_state.uploaded_files:
-            st.info(f" Previously uploaded: {len(st.session_state.uploaded_files)} files")
-            if st.button("Clear upload history and upload new files"):
-                st.session_state.uploaded_files = []
-                st.experimental_rerun()
-        
-        elif uploaded_files:
+        if uploaded_files:
             # Automatically process images: detect format and convert to PNG if needed
             st.subheader(" Processing Images Automatically")
             
@@ -289,16 +290,16 @@ def main():
                 status_text = st.empty()
                 
                 uploaded_to_storage = []
+                batch_timestamp = int(time.time() * 1000)
                 for i, (file_data, filename, original_format, was_converted) in enumerate(processed_files):
                     status_text.text(f"Uploading {filename}...")
-                    
+
                     try:
                         # Reset file pointer
                         file_data.seek(0)
-                        
-                        # Create unique filename with timestamp
-                        timestamp = int(time.time() * 1000)
-                        final_filename = f"{timestamp}_{filename}"
+
+                        # Create unique filename: batch timestamp + index prevents collisions
+                        final_filename = f"{batch_timestamp}_{i}_{filename}"
                         
                         # Show upload info
                         if was_converted:
@@ -408,7 +409,7 @@ def main():
         
         # Auto-setup button (only enabled if token is provided)
         if personal_access_token:
-            if st.button("Auto-Setup Label Studio Project", type="primary", use_container_width=True):
+            if st.button("PRESS THIS BUTTON to Auto-Setup Label Studio Project", type="primary", use_container_width=True):
                 try:
                     from app.label_studio.auto_config import LabelStudioAutoConfig
                     

@@ -233,24 +233,16 @@ class AnnotationTypeDetector:
             }
         
         elif detection['type'] == 'brush':
-            if detection['has_explicit_background']:
-                # User explicitly included background in brush annotations
-                class_names = detection['class_names']
-                return {
-                    'class_names': class_names,
-                    'annotation_type': 'brush',
-                    'background_handling': 'explicit',
-                    'recommendation': 'Use brush training script - background is explicitly defined'
-                }
-            else:
-                # User did not include background in brush annotations
-                class_names = detection['class_names']
-                return {
-                    'class_names': class_names,
-                    'annotation_type': 'brush',
-                    'background_handling': 'none',
-                    'recommendation': 'Use brush training script - no background class needed'
-                }
+            # For brush annotations, always include Background as first class
+            # and strip any user-defined "background" label.
+            # Unpainted pixels are treated as background automatically.
+            class_names = ['Background'] + [name for name in detection['class_names'] if name.lower() != 'background']
+            return {
+                'class_names': class_names,
+                'annotation_type': 'brush',
+                'background_handling': 'automatic',
+                'recommendation': 'Use brush training script - unpainted pixels are automatically background'
+            }
         
         else:
             # Mixed or unknown - default to brush handling
