@@ -82,7 +82,8 @@ def create_analysis_overlay(
     pred_masks: List[np.ndarray],
     class_names: List[str],
     analysis_result: Dict,
-    alpha: float = 0.4
+    alpha: float = 0.4,
+    min_object_area: int = MIN_OBJECT_AREA
 ) -> np.ndarray:
     """
     Create a visualization overlay with class masks, contours, and object labels.
@@ -108,7 +109,7 @@ def create_analysis_overlay(
         (255, 165, 0),
     ]
 
-    overlay = image.copy().astype(np.float32)
+    result = image.copy()
 
     color_idx = 0
     for i, (mask, class_name) in enumerate(zip(pred_masks, class_names)):
@@ -118,19 +119,17 @@ def create_analysis_overlay(
         color = colors[color_idx % len(colors)]
         color_idx += 1
 
-        mask_bool = mask.astype(bool)
-        if mask_bool.any():
-            overlay[mask_bool] = (
-                overlay[mask_bool] * (1 - alpha) +
-                np.array(color, dtype=np.float32) * alpha
-            )
+        labeled_array, num_features = connected_components(mask.astype(np.uint8))
+        filtered_mask = np.zeros_like(mask)
+        for obj_id in range(1, num_features + 1):
+            obj_mask = labeled_array == obj_id
+            if obj_mask.sum() >= min_object_area:
+                filtered_mask[obj_mask] = 1
 
-        contours, _ = cv2.findContours(
-            mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
-        )
-        overlay_uint8 = overlay.astype(np.uint8)
-        cv2.drawContours(overlay_uint8, contours, -1, color, 2)
-        overlay = overlay_uint8.astype(np.float32)
+        if filtered_mask.astype(bool).any():
+            color_layer = result.copy()
+            color_layer[filtered_mask == 1] = color
+            result = cv2.addWeighted(result, 1 - alpha, color_layer, alpha, 0)
 
         class_data = analysis_result['classes'].get(class_name, {})
         for obj in class_data.get('objects', []):
@@ -139,13 +138,12 @@ def create_analysis_overlay(
             text_x = bbox[1]
             text_y = max(bbox[0] - 5, 15)
             cv2.putText(
-                overlay_uint8, label_text,
+                result, label_text,
                 (text_x, text_y),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA
             )
-            overlay = overlay_uint8.astype(np.float32)
 
-    return overlay.astype(np.uint8)
+    return result
 
 
 def aggregate_batch_results(

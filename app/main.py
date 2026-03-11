@@ -1507,7 +1507,8 @@ def main():
                         # Create overlay
                         overlay = create_analysis_overlay(
                             image_rgb, pred_masks,
-                            class_names, analysis
+                            class_names, analysis,
+                            min_object_area=min_area
                         )
 
                         all_results.append(analysis)
