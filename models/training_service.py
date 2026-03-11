@@ -20,6 +20,7 @@ class TrainingService:
         # Use absolute paths to ensure files are created in the correct location
         self.progress_file = "/app/training_progress.json"
         self.log_file = "/app/training.log"
+        self.pid_file = "/app/training.pid"
         self.is_running = False
         self.bucket_name = bucket_name
         self.annotation_prefix = annotation_prefix
@@ -88,6 +89,9 @@ class TrainingService:
                 return False, f"Training process failed to start (return code: {return_code})"
             
             print(f"🔍 DEBUG: Subprocess started with PID: {self.training_process.pid}")
+            # Persist PID so stop_training() works across Streamlit rerenders
+            with open(self.pid_file, 'w') as f:
+                f.write(str(self.training_process.pid))
             self.is_running = True
             
             # Start monitoring thread
@@ -106,26 +110,54 @@ class TrainingService:
     
     def stop_training(self):
         """Stop the training process gracefully"""
-        if not self.is_running or not self.training_process:
-            return False, "No training process running"
-            
-        try:
-            # Send SIGTERM to the process group
-            os.killpg(os.getpgid(self.training_process.pid), signal.SIGTERM)
-            
-            # Wait for graceful shutdown
+        # Resolve the process group ID — either from the live process handle
+        # or from the PID file (needed when called from a fresh Streamlit rerender
+        # that has no direct reference to the original subprocess).
+        pgid = None
+
+        if self.training_process:
             try:
-                self.training_process.wait(timeout=30)
+                pgid = os.getpgid(self.training_process.pid)
+            except (ProcessLookupError, OSError):
+                pass
+
+        if pgid is None and os.path.exists(self.pid_file):
+            try:
+                with open(self.pid_file) as f:
+                    pid = int(f.read().strip())
+                pgid = os.getpgid(pid)
+            except (ValueError, ProcessLookupError, OSError):
+                pass
+
+        if pgid is None:
+            return False, "No training process running"
+
+        try:
+            # Send SIGINT so Python's KeyboardInterrupt handler runs and saves
+            # the partial checkpoint before exiting.
+            os.killpg(pgid, signal.SIGINT)
+
+            # Wait up to 60 s for the script to finish saving
+            try:
+                if self.training_process:
+                    self.training_process.wait(timeout=60)
+                else:
+                    time.sleep(10)  # give the process group time to save and exit
             except subprocess.TimeoutExpired:
-                # Force kill if not responding
-                os.killpg(os.getpgid(self.training_process.pid), signal.SIGKILL)
-                self.training_process.wait()
-            
+                # Graceful save timed out — force kill
+                os.killpg(pgid, signal.SIGKILL)
+                if self.training_process:
+                    self.training_process.wait()
+
             self.is_running = False
             self.training_process = None
-            
+
+            # Remove PID file
+            if os.path.exists(self.pid_file):
+                os.remove(self.pid_file)
+
             return True, "Training stopped successfully"
-            
+
         except Exception as e:
             return False, f"Failed to stop training: {str(e)}"
     
@@ -319,6 +351,8 @@ class TrainingService:
                 os.remove(self.progress_file)
             if os.path.exists(self.log_file):
                 os.remove(self.log_file)
+            if os.path.exists(self.pid_file):
+                os.remove(self.pid_file)
             
             # Clear memory state
             self._clear_memory_state()
