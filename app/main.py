@@ -375,99 +375,97 @@ def main():
             return
         
         # Label Studio Setup Section (only shown if no project is configured)
-        st.subheader(" Create new Label Studio project")
-        st.info("You only do it once when creating a new project.")
+        st.subheader("Create new Label Studio project")
+        st.info("Configure your project once. Label Studio will be set up automatically — no token needed.")
 
-        # Project configuration - fixed values for simplicity
         project_name = "semantic-segmentation"
         project_description = "Automated semantic segmentation project with MinIO storage"
 
-        # Token input section
-        st.markdown("<p style='font-size:1.2em;font-weight:bold;'>1. Open Label Studio:</p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Go to: <a href='http://localhost:8080' target='_blank'>http://localhost:8080</a></p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Login: admin@example.com / admin</p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:1.2em;font-weight:bold;'>2. Generate Token:</p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Click your username in top right → Account Settings</p>", unsafe_allow_html=True)
-        st.image("/app/app/LS_screen_1.jpg")
-        st.image("/app/app/LS_screen_2.jpg")
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Look for \"Access Tokens\" or \"API Tokens\"</p>", unsafe_allow_html=True)
-        st.image("/app/app/LS_screen_3.jpg")
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Create new token with read/write permissions</p>", unsafe_allow_html=True)
-        st.image("/app/app/LS_screen_4.jpg")
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Copy the generated token</p>", unsafe_allow_html=True)
-        st.image("/app/app/LS_screen_5.jpg")
-        st.markdown("<p style='font-size:1.2em;font-weight:bold;'>3. Paste Token Below:</p>", unsafe_allow_html=True)
-        st.markdown("<p style='font-size:1.1em;font-weight:bold;'>- Paste your token in the field below and press ENTER</p>", unsafe_allow_html=True)
-        
-        # Token input field
-        personal_access_token = st.text_input(
-            "",
-            type="password",
-            placeholder="Paste your Label Studio personal access token here",
-            help="This token will be used to automatically configure your Label Studio project"
+        # --- Annotation mode ---
+        st.markdown("#### Annotation tool")
+        annotation_type = st.radio(
+            "Choose how annotators will draw regions:",
+            options=["brush", "polygon"],
+            format_func=lambda x: "Brush (paint pixels)" if x == "brush" else "Polygon (draw outlines)",
+            horizontal=True,
         )
-        
-        # Auto-setup button (only enabled if token is provided)
-        if personal_access_token:
-            if st.button("PRESS THIS BUTTON to Auto-Setup Label Studio Project", type="primary", use_container_width=True):
+
+        # --- Class editor ---
+        st.markdown("#### Classes")
+        st.caption("Define the label classes for this project. At least one class is required.")
+
+        # Initialise class list in session state
+        if "ls_classes" not in st.session_state:
+            st.session_state.ls_classes = [
+                {"name": "Background", "color": "#000000"},
+                {"name": "Object", "color": "#ff0000"},
+            ]
+
+        def _add_class():
+            st.session_state.ls_classes.append(
+                {"name": f"Class {len(st.session_state.ls_classes) + 1}", "color": "#00aa00"}
+            )
+
+        def _delete_class(idx):
+            st.session_state.ls_classes.pop(idx)
+
+        # Render editable rows
+        for i, cls in enumerate(st.session_state.ls_classes):
+            col_name, col_color, col_del = st.columns([4, 2, 1])
+            with col_name:
+                new_name = st.text_input(
+                    f"Class name {i+1}", value=cls["name"], key=f"cls_name_{i}", label_visibility="collapsed"
+                )
+                st.session_state.ls_classes[i]["name"] = new_name
+            with col_color:
+                new_color = st.color_picker(
+                    f"Color {i+1}", value=cls["color"], key=f"cls_color_{i}", label_visibility="collapsed"
+                )
+                st.session_state.ls_classes[i]["color"] = new_color
+            with col_del:
+                if len(st.session_state.ls_classes) > 1:
+                    st.button("✕", key=f"cls_del_{i}", on_click=_delete_class, args=(i,))
+
+        st.button("+ Add class", on_click=_add_class)
+
+        # --- Setup button ---
+        st.markdown("---")
+        if st.button("Setup Label Studio Project", type="primary", use_container_width=True):
+            class_names = [c["name"] for c in st.session_state.ls_classes if c["name"].strip()]
+            class_colors = [c["color"] for c in st.session_state.ls_classes if c["name"].strip()]
+
+            if not class_names:
+                st.error("Please add at least one class before setting up.")
+            else:
                 try:
                     from app.label_studio.auto_config import LabelStudioAutoConfig
-                    
-                    # Initialize auto-config with the provided token
+
                     auto_config = LabelStudioAutoConfig(base_url="http://label-studio:8080")
-                    auto_config.personal_access_token = personal_access_token
-                    
-                    # Run automatic setup
+
                     with st.spinner("Setting up Label Studio project automatically..."):
-                        project_id = auto_config.auto_setup_project(project_name, project_description)
-                        
-                        if project_id:
-                            st.session_state.label_studio_project_id = project_id
-                            st.session_state.label_studio_project_name = project_name
-                            
-                            # Save project configuration to persistent storage
-                            save_project_config(project_id, project_name, project_description)
-                            
-                            st.success(f"Project setup complete! Project ID: {project_id}")
-                            
-                            # Show next steps
-                            st.markdown("### Next Steps")
-                            st.markdown("""
-                            **1. Access Your Project:**
-                            - Open: http://localhost:8080
-                            - Login: admin@example.com
-                            - Password: admin
-                            - Your project should be visible in the projects list
-                            
-                            **2. Customize Classes (Optional):**
-                            - Go to: Project Settings → Labeling Interface
-                            - Modify the label configuration to add your specific classes
-                            - Customize colors and labels as needed
-                            - Save changes
-                            
-                            **3. Start Annotating:**
-                            - Click on your project to open it
-                            - Use the brush tool to paint over objects
-                            - Assign labels to segmented regions
-                            - Annotations are automatically saved to MinIO
-                            
-                            **4. Export Annotations:**
-                            - Go to: Export → Export Annotations
-                            - Choose format: JSON or COCO
-                            - Annotations saved to: MinIO/annotations/
-                            """)
-                            
-                            # Direct link to project
-                            st.markdown(
-                                f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" style="font-size:1.2em;font-weight:bold;">'
-                                'Open Project in Label Studio</a>',
-                                unsafe_allow_html=True
-                            )
-                        else:
-                            st.error("Automatic setup failed. Check the logs above for details.")
-                            
+                        project_id = auto_config.auto_setup_project(
+                            project_name,
+                            project_description,
+                            annotation_type=annotation_type,
+                            class_names=class_names,
+                            class_colors=class_colors,
+                        )
+
+                    if project_id:
+                        st.session_state.label_studio_project_id = project_id
+                        st.session_state.label_studio_project_name = project_name
+                        save_project_config(project_id, project_name, project_description)
+                        st.success(f"Project setup complete! Project ID: {project_id}")
+                        st.markdown(
+                            f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" '
+                            f'style="font-size:1.2em;font-weight:bold;">Open Project in Label Studio</a>',
+                            unsafe_allow_html=True,
+                        )
+                    else:
+                        st.error("Setup failed. Check the messages above for details.")
+
                 except Exception as e:
-                    st.error(f"Error during automatic setup: {str(e)}")
+                    st.error(f"Error during setup: {str(e)}")
                     st.info("Make sure Label Studio is running and accessible at http://localhost:8080")
 
     elif st.session_state.current_step == "train":
