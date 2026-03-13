@@ -17,7 +17,7 @@ from models.config import ModelConfig
 from models.inference_single import Inferencer
 from models.utils.gpu_detector import detect_gpu, print_device_info
 from app.storage_manager import get_storage_manager
-from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images
+from app.label_studio.config import create_label_studio_project, sync_images_to_label_studio, get_project_images, push_images_to_label_studio
 from app.image_utils import process_uploaded_images, get_supported_formats, format_file_size, estimate_conversion_time, convert_to_png, detect_image_format
 from models.batch_analysis import analyze_single_image, create_analysis_overlay, aggregate_batch_results
 
@@ -338,6 +338,10 @@ def main():
                 except Exception as e:
                     st.error(f" Error verifying uploads: {str(e)}")
                 
+                # Push uploaded images as tasks directly to Label Studio
+                if uploaded_to_storage and st.session_state.get('label_studio_project_id'):
+                    push_images_to_label_studio(st.session_state.label_studio_project_id, uploaded_to_storage)
+
                 # Clear the uploaded files to prevent re-upload
                 st.session_state.uploaded_files = uploaded_to_storage
                 
@@ -390,16 +394,34 @@ def main():
             horizontal=True,
         )
 
+        # --- Background handling note ---
+        if annotation_type == "brush":
+            st.info(
+                "**Brush mode:** any pixel you leave unpainted is automatically treated as background "
+                "by the training pipeline — you do not need to paint background areas. "
+                "Adding a 'Background' class here is redundant."
+            )
+        else:
+            st.info(
+                "**Polygon mode:** background is implicit — any area not covered by a polygon is "
+                "treated as background automatically. Do not add a Background class."
+            )
+
         # --- Class editor ---
         st.markdown("#### Classes")
-        st.caption("Define the label classes for this project. At least one class is required.")
+        st.caption("Define the foreground label classes for this project. At least one class is required.")
 
-        # Initialise class list in session state
-        if "ls_classes" not in st.session_state:
-            st.session_state.ls_classes = [
-                {"name": "Background", "color": "#000000"},
-                {"name": "Object", "color": "#ff0000"},
-            ]
+        # Initialise class list in session state — default depends on annotation type
+        if "ls_classes" not in st.session_state or st.session_state.get("ls_classes_annotation_type") != annotation_type:
+            if annotation_type == "brush":
+                st.session_state.ls_classes = [
+                    {"name": "Object", "color": "#ff0000"},
+                ]
+            else:
+                st.session_state.ls_classes = [
+                    {"name": "Object", "color": "#ff0000"},
+                ]
+            st.session_state.ls_classes_annotation_type = annotation_type
 
         def _add_class():
             st.session_state.ls_classes.append(
@@ -434,6 +456,12 @@ def main():
             class_names = [c["name"] for c in st.session_state.ls_classes if c["name"].strip()]
             class_colors = [c["color"] for c in st.session_state.ls_classes if c["name"].strip()]
 
+            # Training dataloaders expect Background at index 0 — prepend it here.
+            # The LS label config only lists the user-defined foreground classes
+            # (background is implicit in both modes); the saved class_config.json
+            # has Background at index 0 so the training scripts get correct indices.
+            training_class_names = ["Background"] + class_names
+
             if not class_names:
                 st.error("Please add at least one class before setting up.")
             else:
@@ -455,6 +483,20 @@ def main():
                         st.session_state.label_studio_project_id = project_id
                         st.session_state.label_studio_project_name = project_name
                         save_project_config(project_id, project_name, project_description)
+
+                        # Save class config for training — Background at index 0, then user classes
+                        class_config = {
+                            "class_names": training_class_names,
+                            "annotation_type": annotation_type,
+                            "background_handling": "implicit",
+                        }
+                        try:
+                            with open("/app/class_config.json", "w") as f:
+                                json.dump(class_config, f, indent=2)
+                            st.session_state.class_config = class_config
+                        except Exception as e:
+                            st.warning(f"Could not save class config: {e}")
+
                         st.success(f"Project setup complete! Project ID: {project_id}")
                         st.markdown(
                             f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" '

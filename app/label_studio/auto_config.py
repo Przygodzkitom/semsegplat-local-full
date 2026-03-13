@@ -216,8 +216,9 @@ class LabelStudioAutoConfig:
             target_storage_id = self._add_target_storage(project_id)
             if not target_storage_id:
                 return False
-            
-            # Store the export storage ID for later use
+
+            # Cache both IDs so later syncs don't need to re-list storages
+            st.session_state.source_storage_id = source_storage_id
             st.session_state.export_storage_id = target_storage_id
             
             # Sync storage to import images
@@ -322,6 +323,83 @@ class LabelStudioAutoConfig:
             st.error(f"Error adding target storage: {str(e)}")
             return None
     
+    def push_tasks(self, project_id: int, storage_keys: list) -> bool:
+        """Push newly uploaded images as tasks directly to Label Studio via the API.
+
+        storage_keys: list of MinIO object keys, e.g. ['images/foo.png', 'images/bar.png']
+        """
+        if not self._ensure_valid_token():
+            return False
+
+        tasks = [
+            {"data": {"image": f"s3://{self.minio_bucket}/{key}"}, "project": project_id}
+            for key in storage_keys
+        ]
+
+        try:
+            resp = self.session.post(f"{self.base_url}/api/tasks/bulk/", json=tasks)
+            if resp.status_code in (200, 201):
+                st.success(f"✅ {len(tasks)} image(s) added to Label Studio")
+                return True
+
+            # Bulk endpoint not available — fall back to one task at a time
+            if resp.status_code == 404:
+                failed = 0
+                for task in tasks:
+                    r = self.session.post(f"{self.base_url}/api/tasks/", json=task)
+                    if r.status_code not in (200, 201):
+                        failed += 1
+                if failed == 0:
+                    st.success(f"✅ {len(tasks)} image(s) added to Label Studio")
+                    return True
+                st.warning(f"⚠️ {failed}/{len(tasks)} tasks failed to add")
+                return False
+
+            st.warning(f"⚠️ Could not add tasks: {resp.status_code} — {resp.text[:200]}")
+            return False
+
+        except Exception as e:
+            st.warning(f"Error pushing tasks: {str(e)}")
+            return False
+
+    def sync_project_storage(self, project_id: int) -> bool:
+        """Authenticate and sync the source storage for a project (for use after new uploads)."""
+        if not self._ensure_valid_token():
+            return False
+
+        try:
+            # Use cached storage ID from setup if available
+            storage_id = st.session_state.get("source_storage_id")
+
+            if not storage_id:
+                # Fall back to listing — try project-scoped endpoint first
+                for url in [
+                    f"{self.base_url}/api/storages/s3/?project={project_id}",
+                    f"{self.base_url}/api/storages/s3/",
+                ]:
+                    resp = self.session.get(url)
+                    if resp.status_code == 200:
+                        storages = resp.json()
+                        match = next(
+                            (s for s in storages
+                             if s.get("project") == project_id and s.get("prefix", "").startswith("images")),
+                            None
+                        )
+                        if match:
+                            storage_id = match["id"]
+                            st.session_state.source_storage_id = storage_id
+                            break
+
+            if not storage_id:
+                st.warning("No source storage ID found — cannot sync. Re-open the app to restore the project session.")
+                return False
+
+            return self._sync_storage(project_id, storage_id)
+
+        except Exception as e:
+            st.warning(f"Storage sync error: {str(e)}")
+            return False
+
     def _sync_storage(self, project_id: int, storage_id: int) -> bool:
         """Sync storage to import images"""
         try:

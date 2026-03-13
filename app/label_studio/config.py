@@ -184,6 +184,12 @@ def sync_images_to_label_studio(project_id, bucket_name):
         st.error(f"Error syncing images: {str(e)}")
         return False
 
+def push_images_to_label_studio(project_id, storage_keys):
+    """Push uploaded images as tasks directly to Label Studio (bypasses storage sync)."""
+    from app.label_studio.auto_config import LabelStudioAutoConfig
+    return LabelStudioAutoConfig().push_tasks(project_id, storage_keys)
+
+
 def get_project_images(project_id):
     """Get list of images in a Label Studio project"""
     try:

@@ -384,16 +384,18 @@ class DiceLoss(nn.Module):
     def forward(self, inputs, targets):
         # Apply sigmoid
         probs = torch.sigmoid(inputs)
-        
-        # Flatten using reshape instead of view to handle non-contiguous tensors
-        probs_flat = probs.reshape(-1)
-        targets_flat = targets.reshape(-1)
-        
-        # Calculate dice coefficient
-        intersection = (probs_flat * targets_flat).sum()
-        dice = (2. * intersection + self.smooth) / (probs_flat.sum() + targets_flat.sum() + self.smooth)
-        
-        return 1 - dice
+
+        # Compute Dice per class channel (dim=1), then average across classes
+        # inputs/targets shape: (batch, classes, H, W)
+        probs_flat = probs.reshape(probs.shape[0], probs.shape[1], -1)      # (B, C, H*W)
+        targets_flat = targets.reshape(targets.shape[0], targets.shape[1], -1)
+
+        intersection = (probs_flat * targets_flat).sum(dim=2)               # (B, C)
+        dice_per_class = (2. * intersection + self.smooth) / (
+            probs_flat.sum(dim=2) + targets_flat.sum(dim=2) + self.smooth   # (B, C)
+        )
+
+        return 1 - dice_per_class.mean()
 
 class CombinedLoss(nn.Module):
     """Combined focal + dice loss for maximum universality"""
