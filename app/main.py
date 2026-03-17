@@ -513,16 +513,10 @@ def main():
     elif st.session_state.current_step == "train":
         st.markdown("<h1 style='text-align: center;'>TRAIN MODEL</h1>", unsafe_allow_html=True)
         
-        st.info(" **Streamlit-Friendly Training Interface**")
-        st.write("This will train a U-Net model with ResNet101 backbone on your LabelStudio annotations.")
-        st.write("Training runs in the background and shows real-time progress.")
-        
         # Define bucket name and use root bucket
         bucket_name = "segmentation-platform"
         selected_project = "root"
         annotation_prefix = "annotations/"
-        
-        st.info(f" Using root bucket")
         
         # Import class detector
         try:
@@ -534,9 +528,7 @@ def main():
             st.error(f"Error importing class detector: {str(e)}")
             st.stop()
         
-        # Annotation Type Detection Section
-        st.subheader(" Annotation Type Detection")
-        
+
         # Check if there are any annotations to detect
         try:
             # Quick check for existing annotations
@@ -564,7 +556,34 @@ def main():
             st.warning(f" Could not check for annotations: {str(e)}")
         
         # Detect annotation type and classes
-        if st.button(" Detect Annotation Type & Classes"):
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Before training, click the button below to detect annotation type and classes from Label Studio.</p>", unsafe_allow_html=True)
+        st.markdown("""
+        <style>
+        div.element-container:has(span#detect-btn-anchor) + div.element-container div.stButton > button,
+        div.element-container:has(span#detect-btn-anchor) + div.element-container div.stButton > button * {
+            background-color: #E65100 !important;
+            color: white !important;
+            font-size: 1.4rem !important;
+            font-weight: 800 !important;
+            width: 100% !important;
+            height: 3.2rem !important;
+            line-height: 3.2rem !important;
+            padding: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 8px !important;
+            border: none !important;
+        }
+        div.element-container:has(span#detect-btn-anchor) + div.element-container div.stButton > button:hover,
+        div.element-container:has(span#detect-btn-anchor) + div.element-container div.stButton > button:hover * {
+            background-color: #FF6D00 !important;
+            color: white !important;
+        }
+        </style>
+        <span id="detect-btn-anchor"></span>
+        """, unsafe_allow_html=True)
+        if st.button(" Detect Annotation Type & Classes", use_container_width=True):
             with st.spinner("Detecting annotation type and classes..."):
                 try:
                     # Import annotation type detector
@@ -579,183 +598,33 @@ def main():
                     
                     st.session_state.annotation_detection = detection
                     st.session_state.class_recommendation = recommendation
-                    
-                    # Display results
-                    st.success(f" Annotation type detected!")
-                    
+
+                    # Save class configuration automatically
+                    config = {
+                        'class_names': recommendation['class_names'],
+                        'annotation_type': recommendation['annotation_type'],
+                        'background_handling': recommendation['background_handling'],
+                        'detection_result': detection
+                    }
+                    with open("/app/class_config.json", 'w') as f:
+                        json.dump(config, f, indent=2)
+                    st.session_state.class_config = config
+
                     col1, col2 = st.columns(2)
                     with col1:
                         st.metric("Annotation Type", detection['type'].title())
-                        st.metric("Sample Annotations", detection['sample_annotations'])
-                    
                     with col2:
-                        st.metric("Background Handling", detection['background_handling'].title())
                         st.metric("Classes Found", len(detection['class_names']))
-                    
-                    # Show detailed information
-                    with st.expander(" Detailed Detection Results", expanded=True):
-                        st.write(f"**Annotation Type:** {detection['type']}")
-                        st.write(f"**Background Handling:** {detection['background_handling']}")
-                        st.write(f"**Has Explicit Background:** {detection['has_explicit_background']}")
+
+                    with st.expander(" Detection Results", expanded=True):
+                        st.write(f"**Annotation Type:** {detection['type'].title()}")
                         st.write(f"**Classes Found:** {detection['class_names']}")
-                        st.write(f"**Recommendation:** {recommendation['recommendation']}")
-                        
-                        if detection['type'] == 'polygon':
-                            st.info(" **Polygon Annotations Detected**")
-                            st.write("- Background is automatically class 0 (unlabeled areas)")
-                            st.write("- Training script will use polygon-specific handling")
-                        elif detection['type'] == 'brush':
-                            st.info(" **Brush Annotations Detected**")
-                            if detection['has_explicit_background']:
-                                st.write("- Background is explicitly defined in annotations")
-                                st.write("- Training script will use brush-specific handling with explicit background")
-                            else:
-                                st.write("- No explicit background class found")
-                                st.write("- Training script will use brush-specific handling without background")
-                        else:
-                            st.warning(" **Mixed/Unknown Annotation Types**")
-                            st.write("- Multiple annotation types detected")
-                            st.write("- Training script will default to brush handling")
-                    
+                        st.info("Background class is always derived from unannotated pixels — you do not need to annotate background regardless of annotation type.")
+
                 except Exception as e:
                     st.error(f"Error detecting annotation type: {str(e)}")
                     import traceback
                     st.text(traceback.format_exc())
-        
-        # Class Configuration Section
-        st.subheader(" Class Configuration")
-        
-        # Show detected classes if available
-        if 'class_recommendation' in st.session_state:
-            recommendation = st.session_state.class_recommendation
-            
-            st.write("**Recommended Class Configuration:**")
-            st.write(f"Classes: {recommendation['class_names']}")
-            st.write(f"Annotation Type: {recommendation['annotation_type']}")
-            st.write(f"Background Handling: {recommendation['background_handling']}")
-            
-            # Allow user to edit class order
-            st.write("**Configure Classes for Training:**")
-            edited_classes = []
-            for i, class_name in enumerate(recommendation['class_names']):
-                new_name = st.text_input(f" {i+1}. Class name:", value=class_name, key=f"class_{i}")
-                if new_name.strip():
-                    edited_classes.append(new_name.strip())
-                else:
-                    edited_classes.append(class_name)
-            
-            # Save class configuration
-            if st.button(" Save Class Configuration", key="save_class_config"):
-                try:
-                    config = {
-                        'class_names': edited_classes,
-                        'annotation_type': recommendation['annotation_type'],
-                        'background_handling': recommendation['background_handling'],
-                        'detection_result': st.session_state.annotation_detection
-                    }
-                    
-                    with open("/app/class_config.json", 'w') as f:
-                        json.dump(config, f, indent=2)
-                    
-                    st.session_state.class_config = config
-                    st.success(" Class configuration saved!")
-                except Exception as e:
-                    st.error(f"Error saving class configuration: {str(e)}")
-        
-        # Legacy class detection (fallback)
-        elif st.button(" Detect Classes from Label Studio (Legacy)"):
-            with st.spinner("Detecting classes from annotations..."):
-                try:
-                    stats = class_detector.get_class_statistics()
-                    st.session_state.detected_classes = stats
-                    st.success(f"Detected {stats['num_classes']} classes from {stats['total_annotations']} annotations!")
-                except Exception as e:
-                    st.error(f"Error detecting classes: {str(e)}")
-        
-        # Show detected classes
-        if 'detected_classes' in st.session_state:
-            stats = st.session_state.detected_classes
-            
-            st.write("**Detected Classes:**")
-            for i, (class_name, count) in enumerate(stats['classes'].items()):
-                st.write(f" • **{class_name}**: {count} annotations")
-            
-            # Class configuration
-            st.write("**Configure Classes for Training:**")
-            st.write("Classes will be used in this order (Background is always first):")
-            
-            # Create class list with Background first
-            class_list = ["Background"] + stats['class_names']
-            
-            # Allow user to edit class order
-            edited_classes = []
-            for i, class_name in enumerate(class_list):
-                if i == 0:  # Background is always first
-                    edited_classes.append(class_name)
-                    st.write(f" {i+1}. **{class_name}** (Background - cannot be changed)")
-                else:
-                    # Allow reordering of object classes
-                    new_name = st.text_input(f" {i+1}. Class name:", value=class_name, key=f"class_{i}")
-                    if new_name.strip():
-                        edited_classes.append(new_name.strip())
-                    else:
-                        edited_classes.append(class_name)
-            
-            # Save class configuration
-            if st.button(" Save Class Configuration", key="save_legacy_class_config"):
-                try:
-                    config = {
-                        'class_names': edited_classes,
-                        'detected_classes': stats['classes'],
-                        'total_annotations': stats['total_annotations']
-                    }
-                    
-                    with open("/app/class_config.json", 'w') as f:
-                        json.dump(config, f, indent=2)
-                    
-                    st.session_state.class_config = config
-                    st.success(" Class configuration saved!")
-                except Exception as e:
-                    st.error(f"Error saving class configuration: {str(e)}")
-        
-        # Show training info
-        with st.expander(" Training Configuration", expanded=False):
-            if 'class_config' in st.session_state:
-                config = st.session_state.class_config
-                annotation_type = config.get('annotation_type', 'unknown')
-                background_handling = config.get('background_handling', 'unknown')
-                
-                st.write("**Model Architecture:** U-Net with ResNet101 backbone")
-                st.write(f"**Classes:** {' + '.join(config['class_names'])} ({len(config['class_names'])} classes)")
-                st.write(f"**Annotation Type:** {annotation_type.title()}")
-                st.write(f"**Background Handling:** {background_handling.title()}")
-                
-                # Show which training script will be used
-                if annotation_type == 'polygon':
-                    st.write("**Training Script:** Polygon-specific (background = class 0)")
-                elif annotation_type == 'brush':
-                    if background_handling == 'explicit':
-                        st.write("**Training Script:** Brush-specific (explicit background)")
-                    else:
-                        st.write("**Training Script:** Brush-specific (no background)")
-                else:
-                    st.write("**Training Script:** Brush-specific (default)")
-                
-                st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
-                st.write("**Training:** 100 epochs with validation")
-                st.write("**Disk Space:** Only saves final model (efficient)")
-                st.write("**Progress:** Real-time updates in Streamlit")
-                st.write("**Background:** Training runs in isolated process (no VM freeze)")
-            else:
-                st.write("**Model Architecture:** U-Net with ResNet101 backbone")
-                st.write("**Classes:** Not configured yet - detect classes first")
-                st.write("**Annotation Type:** Will be auto-detected")
-                st.write("**Training Script:** Will be auto-selected based on annotation type")
-                st.write("**Data Source:** MinIO bucket with LabelStudio annotations")
-                st.write("**Training:** 100 epochs with validation")
-                st.write("**Disk Space:** Only saves final model (efficient)")
-                st.write("**Progress:** Real-time updates in Streamlit")
-                st.write("**Background:** Training runs in isolated process (no VM freeze)")
         
         # Import training service
         try:
@@ -783,37 +652,62 @@ def main():
                 st.info(" Detected running training process - reconnected!")
         
         # Training control buttons
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if not st.session_state.training_running:
-                # Check if class configuration exists
-                if 'class_config' not in st.session_state:
-                    st.warning(" Please configure classes before starting training")
-                    if st.button(" Start Training", type="primary", disabled=True):
-                        pass
-                else:
-                    if st.button(" Start Training", type="primary"):
-                        success, message = training_service.start_training()
-                        if success:
-                            st.session_state.training_running = True
-                            st.session_state.training_log = []
-                            st.session_state.current_epoch = 0
-                            st.success(message)
-                            st.experimental_rerun()
-                        else:
-                            st.error(f"Failed to start training: {message}")
-        
-        with col2:
-            if st.session_state.training_running:
-                if st.button("⏹ Stop Training"):
-                    success, message = training_service.stop_training()
+        if not st.session_state.training_running:
+            st.markdown("""
+            <style>
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button,
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button * {
+                background-color: #E65100 !important;
+                color: white !important;
+                font-size: 1.4rem !important;
+                font-weight: 800 !important;
+                width: 100% !important;
+                height: 3.2rem !important;
+                line-height: 3.2rem !important;
+                padding: 0 !important;
+                display: flex !important;
+                align-items: center !important;
+                justify-content: center !important;
+                border-radius: 8px !important;
+                border: none !important;
+            }
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button:hover,
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button:hover * {
+                background-color: #FF6D00 !important;
+                color: white !important;
+            }
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button:disabled,
+            div.element-container:has(span#start-training-btn-anchor) + div.element-container div.stButton > button:disabled * {
+                background-color: #BF360C !important;
+                opacity: 0.5 !important;
+            }
+            </style>
+            <span id="start-training-btn-anchor"></span>
+            """, unsafe_allow_html=True)
+            if 'class_config' not in st.session_state:
+                if st.button(" Start Training", disabled=True, use_container_width=True):
+                    pass
+            else:
+                if st.button(" Start Training", use_container_width=True):
+                    success, message = training_service.start_training()
                     if success:
-                        st.session_state.training_running = False
+                        st.session_state.training_running = True
+                        st.session_state.training_log = []
+                        st.session_state.current_epoch = 0
                         st.success(message)
                         st.experimental_rerun()
                     else:
-                        st.error(f"Failed to stop training: {message}")
+                        st.error(f"Failed to start training: {message}")
+
+        if st.session_state.training_running:
+            if st.button("⏹ Stop Training"):
+                success, message = training_service.stop_training()
+                if success:
+                    st.session_state.training_running = False
+                    st.success(message)
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Failed to stop training: {message}")
         
         # Show training status
         if st.session_state.training_running:
@@ -892,11 +786,9 @@ def main():
                 # Show final log
                 with st.expander(" Final Training Log", expanded=False):
                     st.text("\n".join(st.session_state.training_log[-50:]))
-            else:
-                st.info("Click 'Start Training' to begin the training process.")
 
     elif st.session_state.current_step == "inference":
-        st.markdown("<h1 style='text-align: center;'>Evaluate model</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 style='text-align: center;'>EVALUATE MODEL</h1>", unsafe_allow_html=True)
         
         # Define bucket name for MinIO access
         bucket_name = "segmentation-platform"
@@ -911,7 +803,8 @@ def main():
             st.stop()
         
         # Let user select from available models
-        selected_model = st.selectbox("Select model", model_files)
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Select model from a dropdown list</p>", unsafe_allow_html=True)
+        selected_model = st.selectbox("", model_files)
         model_path = os.path.join(checkpoints_dir, selected_model)
 
         if not os.path.exists(model_path):
@@ -926,7 +819,6 @@ def main():
                     model_config = json.load(f)
                 class_names = model_config.get('class_names', ["Background"])
                 num_classes = len(class_names)
-                st.success(f" Loaded model config: {num_classes} classes - {', '.join(class_names)}")
             except Exception as e:
                 st.warning(f" Could not load model config: {e}. Using default configuration.")
                 class_names = ["Background"]
@@ -947,8 +839,37 @@ def main():
             st.session_state.threshold = 0.3
             
         # Add threshold slider with session state
+        st.markdown("""
+        <style>
+        /* Slider track container */
+        div[data-baseweb="slider"] div.st-d7 {
+            height: 12px !important;
+        }
+        /* Slider track rail */
+        div[data-baseweb="slider"] div.st-au {
+            height: 12px !important;
+        }
+        /* Thumb */
+        div[data-baseweb="slider"] div.css-1vzeuhh {
+            width: 24px !important;
+            height: 24px !important;
+        }
+        /* Value above thumb */
+        div[data-baseweb="slider"] div.StyledThumbValue {
+            font-size: 1.2rem !important;
+            font-weight: 800 !important;
+        }
+        /* Min/max tick labels */
+        div[data-testid="stTickBarMin"],
+        div[data-testid="stTickBarMax"] {
+            font-size: 1.2rem !important;
+            font-weight: 800 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Segmentation Threshold</p>", unsafe_allow_html=True)
         new_threshold = st.slider(
-            "Segmentation Threshold",
+            "",
             min_value=0.0,
             max_value=1.0,
             value=st.session_state.threshold,
@@ -1011,24 +932,41 @@ def main():
             st.info("Make sure the model was trained with the same class configuration.")
             st.stop()
 
-        # File uploaders
+        # Section 1: inference on unseen image
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>If you want to check how the model performs on previously unseen images, drag and drop one here.</p>", unsafe_allow_html=True)
         st.info(f"Supported formats: {', '.join(get_supported_formats()).upper()}. Non-PNG images will be automatically converted.")
-        uploaded_image = st.file_uploader("Image", type=get_supported_formats(), key="image_uploader",
+        uploaded_image = st.file_uploader("", type=get_supported_formats(), key="image_uploader",
                                           help="Upload an image in any supported format. Non-PNG images will be automatically converted to PNG.")
-        
-        # GT mask options
-        st.subheader("Evaluation Mode")
-        gt_option = st.radio(
-            "Choose evaluation mode:",
-            ["Use Label Studio annotations", "No GT (inference only)"],
-            help="Evaluate with Label Studio annotations or run inference without ground truth"
-        )
 
-        if gt_option == "Use Label Studio annotations":
-            st.info("Will use annotations from storage for evaluation")
-            
-            # Add batch evaluation option
-            if st.button(" Run Batch Evaluation on Label Studio Data"):
+        # Section 2: batch evaluation on annotated images
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>If you want to evaluate the model on your annotated images, press the button below.</p>", unsafe_allow_html=True)
+        st.markdown("""
+        <style>
+        div.element-container:has(span#batch-eval-btn-anchor) + div.element-container div.stButton > button,
+        div.element-container:has(span#batch-eval-btn-anchor) + div.element-container div.stButton > button * {
+            background-color: #E65100 !important;
+            color: white !important;
+            font-size: 1.4rem !important;
+            font-weight: 800 !important;
+            width: 100% !important;
+            height: 3.2rem !important;
+            line-height: 3.2rem !important;
+            padding: 0 !important;
+            display: flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            border-radius: 8px !important;
+            border: none !important;
+        }
+        div.element-container:has(span#batch-eval-btn-anchor) + div.element-container div.stButton > button:hover,
+        div.element-container:has(span#batch-eval-btn-anchor) + div.element-container div.stButton > button:hover * {
+            background-color: #FF6D00 !important;
+            color: white !important;
+        }
+        </style>
+        <span id="batch-eval-btn-anchor"></span>
+        """, unsafe_allow_html=True)
+        if st.button(" Run Batch Evaluation on Label Studio Data", use_container_width=True):
                 with st.spinner("Running batch evaluation on Label Studio annotations..."):
                     try:
                         from models.inference_batch import batch_evaluate_with_minio_annotations
@@ -1067,20 +1005,29 @@ def main():
                                 st.metric("Model", selected_model)
                             
                             # Show detailed results
+                            st.markdown("""
+                            <style>
+                            div.css-q8sbsg > p {
+                                font-size: 1.8rem !important;
+                                font-weight: 800 !important;
+                            }
+                            </style>
+                            """, unsafe_allow_html=True)
                             with st.expander(" Detailed Metrics", expanded=True):
-                                st.write("**Class-wise IoU scores:**")
+                                st.markdown("<p style='font-size:1.2rem; font-weight:800; margin-bottom:4px;'>Class-wise IoU scores</p>", unsafe_allow_html=True)
                                 for i, miou in enumerate(results['mean_ious']):
                                     class_name = results['class_names'][i] if i < len(results['class_names']) else f"Class {i}"
-                                    st.write(f" {class_name}: {miou:.4f}")
-                                
+                                    st.markdown(f"<p style='font-size:1.1rem; font-weight:600; margin:2px 0;'>&nbsp;&nbsp;{class_name}: <b>{miou:.4f}</b></p>", unsafe_allow_html=True)
+
                                 # Show object-wise metrics if available
                                 if results['avg_metrics']:
-                                    st.write("**Object-wise metrics:**")
+                                    st.markdown("<p style='font-size:1.2rem; font-weight:800; margin-top:12px; margin-bottom:4px;'>Object-wise metrics</p>", unsafe_allow_html=True)
                                     for class_name, metrics in results['avg_metrics'].items():
-                                        st.write(f" **{class_name}:**")
-                                        st.write(f" Precision: {metrics['precision']:.4f}")
-                                        st.write(f" Recall: {metrics['recall']:.4f}")
-                                        st.write(f" F1-Score: {metrics['f1']:.4f}")
+                                        st.markdown(f"<p style='font-size:1.15rem; font-weight:800; margin-top:8px;'>{class_name}</p>", unsafe_allow_html=True)
+                                        cols = st.columns(3)
+                                        cols[0].metric("Precision", f"{metrics['precision']:.4f}")
+                                        cols[1].metric("Recall", f"{metrics['recall']:.4f}")
+                                        cols[2].metric("F1-Score", f"{metrics['f1']:.4f}")
                         else:
                             st.warning("No data found for evaluation")
                             st.info("Make sure you have Label Studio annotations in your MinIO bucket.")
@@ -1110,20 +1057,13 @@ def main():
                     image_bytes = uploaded_image.read()
                 image = process_image(image_bytes)
 
-                if gt_option == "No GT (inference only)":
-                    pred_masks = inferencer.predict(image)
-                    overlayed_pred, _ = inferencer.create_visualization(image, pred_masks)
-                    st.image(overlayed_pred, caption="Predicted Mask", use_column_width=True)
-                    st.info("No ground truth provided - inference only mode")
-                else:
-                    # Use Label Studio annotations mode
-                    st.info(" Use the 'Run Batch Evaluation on Label Studio Data' button above to evaluate with annotated images.")
+                pred_masks = inferencer.predict(image)
+                overlayed_pred, _ = inferencer.create_visualization(image, pred_masks)
+                st.image(overlayed_pred, caption="Predicted Mask", use_column_width=True)
 
     elif st.session_state.current_step == "batch_analysis":
         st.markdown("<h1 style='text-align: center;'>BATCH ANALYSIS</h1>", unsafe_allow_html=True)
-        st.info("Upload images for quantitative segmentation analysis. "
-                "This counts objects and measures their area per class. "
-                "No ground truth comparison is performed.")
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Upload images for quantitative segmentation analysis. This counts objects and measures their area per class.</p>", unsafe_allow_html=True)
 
         # Model selection
         checkpoints_dir = "models/checkpoints"
@@ -1160,8 +1100,32 @@ def main():
         if 'ba_threshold' not in st.session_state:
             st.session_state.ba_threshold = 0.3
 
+        st.markdown("""
+        <style>
+        div[data-baseweb="slider"] div.st-d7 {
+            height: 12px !important;
+        }
+        div[data-baseweb="slider"] div.st-au {
+            height: 12px !important;
+        }
+        div[data-baseweb="slider"] div.css-1vzeuhh {
+            width: 24px !important;
+            height: 24px !important;
+        }
+        div[data-baseweb="slider"] div.StyledThumbValue {
+            font-size: 1.2rem !important;
+            font-weight: 800 !important;
+        }
+        div[data-testid="stTickBarMin"],
+        div[data-testid="stTickBarMax"] {
+            font-size: 1.2rem !important;
+            font-weight: 800 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Segmentation Threshold</p>", unsafe_allow_html=True)
         ba_threshold = st.slider(
-            "Segmentation Threshold", 0.0, 1.0,
+            "", 0.0, 1.0,
             value=st.session_state.ba_threshold, step=0.05,
             key='ba_threshold_slider',
             help="Higher values = more selective segmentation."
