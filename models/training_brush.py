@@ -222,17 +222,29 @@ try:
     detector = AnnotationTypeDetector(BUCKET_NAME, ANNOTATION_PREFIX)
     detection = detector.detect_annotation_type()
     has_explicit_background = detection.get('has_explicit_background', False)
-    
+
     print(f"🎨 Background handling: {'Explicit' if has_explicit_background else 'Implicit'}")
-    
+
+    # Load test split to exclude test images from training
+    exclude_image_keys = None
+    test_split_file = os.getenv('TEST_SPLIT_FILE')
+    if test_split_file and os.path.exists(test_split_file):
+        with open(test_split_file) as f:
+            split_data = json.load(f)
+        exclude_image_keys = split_data.get('test_image_keys', [])
+        print(f"📊 Will exclude {len(exclude_image_keys)} test-set images from brush training")
+    else:
+        print("⚠️ No test split file found — training on all annotated images")
+
     dataset = BrushDataset(
         bucket_name=BUCKET_NAME,
         img_prefix=IMG_PREFIX,
         annotation_prefix=ANNOTATION_PREFIX,
-        transform=transform, 
+        transform=transform,
         multilabel=True,
         class_names=class_names,  # Use dynamic class configuration
-        has_explicit_background=has_explicit_background  # Pass background handling info
+        has_explicit_background=has_explicit_background,  # Pass background handling info
+        exclude_image_keys=exclude_image_keys  # Exclude test-set images
     )
     print("✅ Dataset created successfully for BRUSH annotations!")
     update_progress(0, 100, "initializing", "Dataset created successfully for BRUSH annotations!")
@@ -248,8 +260,12 @@ except Exception as e:
 # Split dataset into train/val (80/20 split)
 from torch.utils.data import random_split
 total_size = len(dataset)
-train_size = int(0.8 * total_size)
-val_size = total_size - train_size
+if total_size < 2:
+    train_size = total_size
+    val_size = 0
+else:
+    train_size = max(1, int(0.8 * total_size))
+    val_size = total_size - train_size
 
 print(f"📊 Dataset size: {total_size}")
 print(f"📊 Training samples: {train_size}")

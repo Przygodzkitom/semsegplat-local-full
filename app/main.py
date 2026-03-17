@@ -951,8 +951,8 @@ def main():
         uploaded_image = st.file_uploader("", type=get_supported_formats(), key="image_uploader",
                                           help="Upload an image in any supported format. Non-PNG images will be automatically converted to PNG.")
 
-        # Section 2: batch evaluation on annotated images
-        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>If you want to evaluate the model on your annotated images, press the button below.</p>", unsafe_allow_html=True)
+        # Section 2: batch evaluation on held-out test images
+        st.markdown("<p style='font-size:1.2rem; font-weight:800;'>Evaluate the model on the held-out test set — images reserved before training and never used by the model.</p>", unsafe_allow_html=True)
         st.markdown("""
         <style>
         div.element-container:has(span#batch-eval-btn-anchor) + div.element-container div.stButton > button,

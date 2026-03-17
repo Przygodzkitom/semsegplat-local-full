@@ -245,11 +245,31 @@ except Exception as e:
     traceback.print_exc()
     exit(1)
 
+# Filter out test-set images before training
+test_split_file = os.getenv('TEST_SPLIT_FILE')
+if test_split_file and os.path.exists(test_split_file):
+    with open(test_split_file) as f:
+        split_data = json.load(f)
+    test_keys = set(split_data.get('test_image_keys', []))
+    original_size = len(dataset.image_annotation_pairs)
+    dataset.image_annotation_pairs = [
+        p for p in dataset.image_annotation_pairs if p[0] not in test_keys
+    ]
+    excluded = original_size - len(dataset.image_annotation_pairs)
+    print(f"📊 Excluded {excluded} test-set images from training (reserved for evaluation)")
+    print(f"📊 Training pool: {len(dataset.image_annotation_pairs)} images")
+else:
+    print("⚠️ No test split file found — training on all annotated images")
+
 # Split dataset into train/val (80/20 split)
 from torch.utils.data import random_split
 total_size = len(dataset)
-train_size = int(0.8 * total_size)
-val_size = total_size - train_size
+if total_size < 2:
+    train_size = total_size
+    val_size = 0
+else:
+    train_size = max(1, int(0.8 * total_size))
+    val_size = total_size - train_size
 
 print(f"📊 Dataset size: {total_size}")
 print(f"📊 Training samples: {train_size}")

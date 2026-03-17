@@ -52,7 +52,12 @@ class TrainingService:
             # Set environment variables for bucket and prefix
             env['BUCKET_NAME'] = self.bucket_name
             env['ANNOTATION_PREFIX'] = self.annotation_prefix
-            
+
+            # Create test split before training (reserves images never seen by model)
+            test_split_file = self._create_test_split_if_needed()
+            if test_split_file:
+                env['TEST_SPLIT_FILE'] = test_split_file
+
             # Detect annotation type and choose appropriate training script
             training_script = self._detect_and_choose_training_script()
             print(f"🔍 DEBUG: Using training script: {training_script}")
@@ -312,6 +317,97 @@ class TrainingService:
         except Exception as e:
             print(f"Error appending to log: {e}")
     
+    def _create_test_split_if_needed(self):
+        """Reserve 20% of annotated images as a held-out test set before training.
+
+        If the file already exists the same split is reused across training runs,
+        so test images are never seen by the model.
+        """
+        test_split_file = "/app/models/checkpoints/test_split.json"
+
+        if os.path.exists(test_split_file):
+            try:
+                with open(test_split_file) as f:
+                    existing = json.load(f)
+                n_test = len(existing.get('test_image_keys', []))
+                print(f"✅ Existing test split loaded: {n_test} images reserved for evaluation")
+                return test_split_file
+            except Exception as e:
+                print(f"⚠️ Could not read existing test split ({e}), recreating")
+
+        print("🔍 Creating test split from annotated images...")
+        try:
+            import boto3
+            import random
+
+            endpoint_url = os.getenv('MINIO_ENDPOINT', 'http://localhost:9000')
+            access_key = os.getenv('MINIO_ACCESS_KEY', 'minioadmin')
+            secret_key = os.getenv('MINIO_SECRET_KEY', 'minioadmin123')
+
+            s3_client = boto3.client(
+                's3',
+                endpoint_url=endpoint_url,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+                region_name='us-east-1'
+            )
+
+            response = s3_client.list_objects_v2(
+                Bucket=self.bucket_name,
+                Prefix=self.annotation_prefix
+            )
+
+            if 'Contents' not in response:
+                print("⚠️ No annotations found, skipping test split creation")
+                return None
+
+            image_keys = []
+            for obj in response['Contents']:
+                if obj['Key'].endswith('/') or obj['Size'] == 0:
+                    continue
+                if '.' not in obj['Key'].split('/')[-1]:
+                    try:
+                        ann_response = s3_client.get_object(
+                            Bucket=self.bucket_name, Key=obj['Key']
+                        )
+                        annotation_data = json.loads(ann_response['Body'].read().decode('utf-8'))
+                        if annotation_data and 'task' in annotation_data:
+                            image_path = annotation_data['task'].get('data', {}).get('image', '')
+                            if image_path.startswith('s3://'):
+                                image_key = image_path.replace(f's3://{self.bucket_name}/', '')
+                                image_keys.append(image_key)
+                    except Exception as e:
+                        print(f"⚠️ Error reading annotation {obj['Key']}: {e}")
+                        continue
+
+            if not image_keys:
+                print("⚠️ No image keys found, skipping test split creation")
+                return None
+
+            n_test = max(1, int(len(image_keys) * 0.2))
+            random.shuffle(image_keys)
+            test_keys = image_keys[:n_test]
+
+            from datetime import datetime
+            os.makedirs("/app/models/checkpoints", exist_ok=True)
+            split_data = {
+                'created_at': datetime.now().isoformat(),
+                'test_image_keys': test_keys,
+                'total_annotated': len(image_keys),
+                'test_fraction': round(n_test / len(image_keys), 3)
+            }
+            with open(test_split_file, 'w') as f:
+                json.dump(split_data, f, indent=2)
+
+            print(f"✅ Test split created: {n_test}/{len(image_keys)} images reserved for evaluation")
+            return test_split_file
+
+        except Exception as e:
+            print(f"⚠️ Could not create test split: {e}")
+            import traceback
+            traceback.print_exc()
+            return None
+
     def _detect_and_choose_training_script(self):
         """Detect annotation type and choose appropriate training script"""
         try:

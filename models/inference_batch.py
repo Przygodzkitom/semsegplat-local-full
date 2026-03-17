@@ -294,9 +294,23 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
         
         conn.close()
         
+        # Load test split to restrict evaluation to held-out images only
+        test_split_file = "/app/models/checkpoints/test_split.json"
+        if os.path.exists(test_split_file):
+            with open(test_split_file) as f:
+                split_data = json.load(f)
+            test_keys = set(split_data.get('test_image_keys', []))
+            n_total = split_data.get('total_annotated', '?')
+            print(f"✅ Test split found: evaluating on {len(test_keys)}/{n_total} held-out images")
+            debug_info.append(f"Test split: {len(test_keys)}/{n_total} images reserved for evaluation")
+        else:
+            test_keys = None
+            print("⚠️ No test split file found — evaluating on ALL annotated images (train data included!)")
+            debug_info.append("WARNING: No test split found — evaluation includes training images")
+
         # Now process the export data and load images
         image_annotation_pairs = []
-        
+
         # Initialize MinIO client for image access
         import boto3
         from botocore.exceptions import ClientError
@@ -360,6 +374,10 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
                 annotation_data = {
                     'result': result
                 }
+                # Skip images not in the test split
+                if test_keys is not None and image_key not in test_keys:
+                    continue
+
                 gt_mask = parse_labelstudio_annotation(annotation_data, class_names)
                 if gt_mask is not None:
                     # Return format: (image_path, gt_mask, image)

@@ -31,7 +31,7 @@ class BrushDataset(Dataset):
     """
 
     def __init__(self, bucket_name, img_prefix="images/", annotation_prefix="annotations/",
-                 transform=None, multilabel=True, class_names=None, **kwargs):
+                 transform=None, multilabel=True, class_names=None, exclude_image_keys=None, **kwargs):
         self.bucket_name = bucket_name
         self.img_prefix = img_prefix
         self.annotation_prefix = annotation_prefix
@@ -64,6 +64,15 @@ class BrushDataset(Dataset):
         raw_pairs = self._load_image_annotation_pairs()
         if len(raw_pairs) == 0:
             raise ValueError(f"No image-annotation pairs found in bucket {bucket_name}")
+
+        # Filter out test set images before caching
+        if exclude_image_keys:
+            exclude_set = set(exclude_image_keys)
+            original_len = len(raw_pairs)
+            raw_pairs = [(img_k, ann_k) for img_k, ann_k in raw_pairs if img_k not in exclude_set]
+            print(f"Excluded {original_len - len(raw_pairs)} test-set images from brush training dataset")
+            if len(raw_pairs) == 0:
+                raise ValueError("No training images remain after excluding test set")
 
         print(f"Found {len(raw_pairs)} image-annotation pairs for BRUSH annotations")
         print(f"Background handling: unpainted pixels treated as background")
