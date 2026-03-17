@@ -8,6 +8,7 @@ import cv2
 import json
 import time
 import boto3
+import threading
 from pathlib import Path
 
 print("=" * 80)
@@ -136,6 +137,73 @@ st.divider()
 
 
 
+def _upload_worker(raw_files, image_prefix, progress):
+    """Background thread: convert images to PNG and upload to MinIO.
+    Updates the shared progress dict — no Streamlit calls allowed here."""
+    import io as _io
+    from PIL import Image as _Image
+
+    try:
+        s3 = boto3.client(
+            's3',
+            endpoint_url='http://minio:9000',
+            aws_access_key_id='minioadmin',
+            aws_secret_access_key='minioadmin123',
+            region_name='us-east-1',
+        )
+    except Exception as e:
+        progress['errors'].append(f"Storage connection failed: {e}")
+        progress['in_progress'] = False
+        progress['complete'] = False
+        return
+
+    batch_ts = int(time.time() * 1000)
+
+    for i, (file_bytes, original_name) in enumerate(raw_files):
+        try:
+            buf = _io.BytesIO(file_bytes)
+            with _Image.open(buf) as img:
+                fmt = (img.format or 'PNG').upper()
+                if fmt != 'PNG':
+                    if img.mode in ('I', 'F'):
+                        arr = np.array(img, dtype=np.float32)
+                        mn, mx = arr.min(), arr.max()
+                        arr = ((arr - mn) / (mx - mn) * 255).astype(np.uint8) if mx > mn else np.zeros(arr.shape, dtype=np.uint8)
+                        img = _Image.fromarray(arr, mode='L')
+                    elif img.mode == 'RGBA':
+                        bg = _Image.new('RGB', img.size, (255, 255, 255))
+                        bg.paste(img, mask=img.split()[-1])
+                        img = bg
+                    elif img.mode not in ['RGB', 'L']:
+                        img = img.convert('RGB')
+                    out = _io.BytesIO()
+                    img.save(out, format='PNG', optimize=True)
+                    out.seek(0)
+                    final_name = os.path.splitext(original_name)[0] + '.png'
+                else:
+                    out = _io.BytesIO(file_bytes)
+                    final_name = original_name
+
+            unique = f"{batch_ts}_{i}_{final_name}"
+            s3.upload_fileobj(out, "segmentation-platform", f"{image_prefix}{unique}")
+            progress['uploaded'].append(f"{image_prefix}{unique}")
+        except Exception as e:
+            progress['errors'].append(f"{original_name}: {str(e)}")
+
+        progress['done'] = i + 1
+
+    # Push to Label Studio if project already configured
+    try:
+        ls_id = progress.get('ls_project_id')
+        if progress['uploaded'] and ls_id:
+            push_images_to_label_studio(ls_id, progress['uploaded'])
+    except Exception:
+        pass
+
+    progress['in_progress'] = False
+    progress['complete'] = len(progress['uploaded']) == len(raw_files)
+
+
 def load_existing_images(bucket_name=None):
     """Load existing images from storage on startup"""
     storage_manager = get_storage_manager(bucket_name=bucket_name)
@@ -211,144 +279,91 @@ def main():
     if st.session_state.current_step == "upload":
         st.markdown("<h1 style='text-align: center;'>UPLOAD IMAGES</h1>", unsafe_allow_html=True)
 
-        # Simple single-project approach - always upload to images/ folder
-        selected_upload_project = "main"
         image_prefix = "images/"
-        # Load and show existing images
-        existing_project_images = st.session_state.get('existing_images', [])
-        if existing_project_images:
-            st.info(f"Found {len(existing_project_images)} existing images")
+
+        # Initialise upload progress tracker
+        if 'upload_progress' not in st.session_state:
+            st.session_state.upload_progress = {}
+        progress = st.session_state.upload_progress
+
+        if progress.get('in_progress'):
+            # Upload running in background — show live progress and auto-refresh
+            done = progress.get('done', 0)
+            total = progress.get('total', 0)
+            st.info(f"Uploading images in background… {done} / {total} done")
+            st.progress(done / total if total > 0 else 0)
+            time.sleep(1)
+            st.experimental_rerun()
+
+        elif progress.get('complete') is True:
+            st.success(f"All {progress.get('total', 0)} images uploaded successfully.")
+            if progress.get('errors'):
+                for err in progress['errors']:
+                    st.warning(err)
+            if st.button("Upload more images"):
+                st.session_state.upload_progress = {}
+                st.experimental_rerun()
+
+        elif progress.get('complete') is False:
+            st.error(f"Upload finished with {len(progress.get('errors', []))} error(s).")
+            for err in progress.get('errors', []):
+                st.write(f"• {err}")
+            if st.button("Retry / upload new images"):
+                st.session_state.upload_progress = {}
+                st.experimental_rerun()
+
         else:
-            st.info(f"No existing images found")
-        
-        # Enhanced file uploader with format detection and conversion
-        st.subheader("Image Upload & Format Conversion")
-        
-        # Show supported formats
-        supported_formats = get_supported_formats()
-        st.info(f"Supported formats: {', '.join(supported_formats).upper()}")
-        st.info("Non-PNG images will be automatically converted to PNG format for Label Studio compatibility")
-        st.warning(
-            "**Note on automatic conversion:** While the app can convert most formats to PNG, "
-            "some images may not convert correctly — in particular **dim or low-contrast TIFFs** "
-            "(e.g. microscopy, scientific, or HDR images) where the automatic brightness normalization "
-            "may not match your expectations. "
-            "For best results, **convert your images to PNG manually before uploading** "
-            "(e.g. using ImageJ, FIJI, or any image editor) so you can verify they look correct."
-        )
-        
-        # File uploader with expanded format support
-        uploaded_files = st.file_uploader(
-            "Choose images", 
-            accept_multiple_files=True, 
-            type=supported_formats,
-            help="Upload images in any supported format. They will be converted to PNG if needed."
-        )
-        
-        # Add warning for large batches
-        if uploaded_files and len(uploaded_files) > 50:
-            st.warning(f" **Large batch detected:** {len(uploaded_files)} files. Processing may take several minutes. Consider processing in smaller batches for better performance.")
-        
-        if uploaded_files:
-            # Automatically process images: detect format and convert to PNG if needed
-            st.subheader(" Processing Images Automatically")
-            
-            try:
-                # Process uploaded images (detect format and convert if needed)
-                processed_files = process_uploaded_images(uploaded_files)
-                
-                # Show conversion summary
-                converted_count = sum(1 for _, _, _, was_converted in processed_files if was_converted)
-                total_files = len(processed_files)
-                
-                if converted_count > 0:
-                    st.success(f" Processing complete! {converted_count} out of {total_files} images converted to PNG")
-                    
-                    # Show detailed conversion summary
-                    st.subheader(" Conversion Summary")
-                    conversion_details = []
-                    for _, filename, original_format, was_converted in processed_files:
-                        if was_converted:
-                            conversion_details.append(f"• {filename}: {original_format} → PNG")
-                        else:
-                            conversion_details.append(f"• {filename}: {original_format} (already PNG)")
-                    
-                    for detail in conversion_details:
-                        st.write(detail)
-                else:
-                    st.success(f" All {total_files} images are already in PNG format - no conversion needed!")
-                
-                # Upload to project-specific location
-                s3_client = boto3.client(
-                    's3',
-                    endpoint_url='http://minio:9000',
-                    aws_access_key_id='minioadmin',
-                    aws_secret_access_key='minioadmin123',
-                    region_name='us-east-1'
+            # Idle — show file uploader
+            existing_project_images = st.session_state.get('existing_images', [])
+            if existing_project_images:
+                st.info(f"Found {len(existing_project_images)} existing images")
+            else:
+                st.info("No existing images found")
+
+            st.subheader("Image Upload & Format Conversion")
+            supported_formats = get_supported_formats()
+            st.info(f"Supported formats: {', '.join(supported_formats).upper()}")
+            st.warning(
+                "**Note on automatic conversion:** While the app can convert most formats to PNG, "
+                "some images may not convert correctly — in particular **dim or low-contrast TIFFs** "
+                "(e.g. microscopy, scientific, or HDR images) where the automatic brightness normalization "
+                "may not match your expectations. "
+                "For best results, **convert your images to PNG manually before uploading** "
+                "(e.g. using ImageJ, FIJI, or any image editor) so you can verify they look correct."
+            )
+
+            uploaded_files = st.file_uploader(
+                "Choose images",
+                accept_multiple_files=True,
+                type=supported_formats,
+                help="Upload images in any supported format. They will be converted to PNG if needed."
+            )
+
+            if uploaded_files and len(uploaded_files) > 50:
+                st.warning(f"**Large batch detected:** {len(uploaded_files)} files. Processing may take several minutes.")
+
+            if uploaded_files:
+                # Read file bytes immediately — the uploader widget disappears on navigation
+                raw_files = [(f.read(), f.name) for f in uploaded_files]
+
+                new_progress = {
+                    'in_progress': True,
+                    'done': 0,
+                    'total': len(raw_files),
+                    'errors': [],
+                    'uploaded': [],
+                    'complete': None,
+                    'ls_project_id': st.session_state.get('label_studio_project_id'),
+                }
+                st.session_state.upload_progress = new_progress
+
+                t = threading.Thread(
+                    target=_upload_worker,
+                    args=(raw_files, image_prefix, new_progress),
+                    daemon=True,
                 )
-                
-                # Upload progress
-                progress_bar = st.progress(0)
-                status_text = st.empty()
-                
-                uploaded_to_storage = []
-                batch_timestamp = int(time.time() * 1000)
-                for i, (file_data, filename, original_format, was_converted) in enumerate(processed_files):
-                    status_text.text(f"Uploading {filename}...")
-
-                    try:
-                        # Reset file pointer
-                        file_data.seek(0)
-
-                        # Create unique filename: batch timestamp + index prevents collisions
-                        final_filename = f"{batch_timestamp}_{i}_{filename}"
-                        
-                        # Show upload info
-                        if was_converted:
-                            st.info(f" Uploading converted image: {filename} (was {original_format})")
-                        else:
-                            st.info(f" Uploading original image: {filename} ({original_format})")
-                        
-                        # Upload to root bucket
-                        s3_client.upload_fileobj(
-                            file_data,
-                            "segmentation-platform",
-                            f"{image_prefix}{final_filename}"
-                        )
-                        
-                        st.success(f" Upload completed for: {final_filename}")
-                        
-                        uploaded_to_storage.append(f"{image_prefix}{final_filename}")
-                        
-                        # Update progress
-                        progress_bar.progress((i + 1) / len(processed_files))
-                        
-                    except Exception as e:
-                        st.error(f"Failed to upload {filename}: {str(e)}")
-                
-                status_text.text("Upload complete!")
-                st.success(f" Successfully uploaded {len(uploaded_to_storage)} images to project '{selected_upload_project}'")
-                
-                st.info(" Verifying uploads in MinIO...")
-                try:
-                    response = s3_client.list_objects_v2(Bucket="segmentation-platform", Prefix="images/")
-                    if 'Contents' in response:
-                        actual_files = [obj['Key'] for obj in response['Contents'] if not obj['Key'].endswith('/')]
-                        st.info(f" Found {len(actual_files)} files in MinIO: {actual_files}")
-                    else:
-                        st.warning(" No files found in MinIO after upload!")
-                except Exception as e:
-                    st.error(f" Error verifying uploads: {str(e)}")
-                
-                # Push uploaded images as tasks directly to Label Studio
-                if uploaded_to_storage and st.session_state.get('label_studio_project_id'):
-                    push_images_to_label_studio(st.session_state.label_studio_project_id, uploaded_to_storage)
-
-                # Clear the uploaded files to prevent re-upload
-                st.session_state.uploaded_files = uploaded_to_storage
-                
-            except Exception as e:
-                st.error(f" Processing/Upload failed: {str(e)}")
+                t.start()
+                st.experimental_rerun()
 
     elif st.session_state.current_step == "annotate":
         st.markdown("<h1 style='text-align: center;'>ANNOTATE IMAGES</h1>", unsafe_allow_html=True)
@@ -369,7 +384,6 @@ def main():
         
         # Label Studio Setup Section (only shown if no project is configured)
         st.subheader("Create new Label Studio project")
-        st.info("Configure your project once. Label Studio will be set up automatically — no token needed.")
 
         project_name = "semantic-segmentation"
         project_description = "Automated semantic segmentation project with MinIO storage"
@@ -441,7 +455,15 @@ def main():
 
         # --- Setup button ---
         st.markdown("---")
-        if st.button("Setup Label Studio Project", type="primary", use_container_width=True):
+        _up = st.session_state.get('upload_progress', {})
+        _uploading = _up.get('in_progress', False)
+        _upload_failed = _up.get('complete') is False
+        uploads_blocked = _uploading or _upload_failed
+        if _uploading:
+            st.info("Images are still uploading in the background. Please wait until the upload completes before setting up Label Studio.")
+        elif _upload_failed:
+            st.warning("Some images failed to upload. Please go back to Upload Images and resolve the errors before setting up Label Studio.")
+        if st.button("Setup Label Studio Project", type="primary", use_container_width=True, disabled=uploads_blocked):
             class_names = [c["name"] for c in st.session_state.ls_classes if c["name"].strip()]
             class_colors = [c["color"] for c in st.session_state.ls_classes if c["name"].strip()]
 
