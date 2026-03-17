@@ -112,15 +112,17 @@ if not configure_resource_limits():
 logo_path = Path("app/logo.jpg")
 logo_path_png = Path("app/logo.png")
 
-if logo_path.exists():
-    st.image(str(logo_path), width=300)
-elif logo_path_png.exists():
-    st.image(str(logo_path_png), width=300)
-else:
-    # Fallback to text-based header
-    st.markdown("## 🧬 ATI_Box")
-    st.markdown("*ANNOTATION • TRAINING • INFERENCE*")
-    st.markdown("**IN ONE PLACE**")
+col_l, col_m, col_r = st.columns([1, 1, 1])
+with col_m:
+    if logo_path.exists():
+        st.image(str(logo_path), width=300)
+    elif logo_path_png.exists():
+        st.image(str(logo_path_png), width=300)
+    else:
+        # Fallback to text-based header
+        st.markdown("## 🧬 ATI_Box")
+        st.markdown("*ANNOTATION • TRAINING • INFERENCE*")
+        st.markdown("**IN ONE PLACE**")
 
 st.divider()
 
@@ -356,26 +358,13 @@ def main():
             project_id = st.session_state.label_studio_project_id
             project_name = st.session_state.get('label_studio_project_name', 'Unknown')
             
-            # Project is configured - show the interface
-            st.success(f" Project Already Configured: {project_name} (ID: {project_id})")
-            
-            # Show project actions
-            col1, col2 = st.columns(2)
-            with col1:
-                st.markdown(
-                    f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" style="font-size:1.2em;font-weight:bold;">'
-                    ' Open Project in Label Studio</a>',
-                    unsafe_allow_html=True
-                )
-            
-            with col2:
-                st.markdown(
-                    f'<a href="http://localhost:8080/projects/{project_id}/settings" target="_blank" style="font-size:1.1em;">'
-                    ' Project Settings</a>',
-                    unsafe_allow_html=True
-                )
-            
-            st.info(" Your project is ready for annotation! Use the links above to access Label Studio.")
+            st.markdown(
+                f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank">'
+                '<button style="background-color:#FF4B4B;color:white;border:none;padding:0.5em 1em;'
+                'border-radius:0.4em;font-size:1em;font-weight:bold;cursor:pointer;width:100%;">'
+                'Open Project in Label Studio</button></a>',
+                unsafe_allow_html=True
+            )
             return
         
         # Label Studio Setup Section (only shown if no project is configured)
@@ -499,9 +488,11 @@ def main():
 
                         st.success(f"Project setup complete! Project ID: {project_id}")
                         st.markdown(
-                            f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank" '
-                            f'style="font-size:1.2em;font-weight:bold;">Open Project in Label Studio</a>',
-                            unsafe_allow_html=True,
+                            f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank">'
+                            '<button style="background-color:#FF4B4B;color:white;border:none;padding:0.5em 1em;'
+                            'border-radius:0.4em;font-size:1em;font-weight:bold;cursor:pointer;width:100%;">'
+                            'Open Project in Label Studio</button></a>',
+                            unsafe_allow_html=True
                         )
                     else:
                         st.error("Setup failed. Check the messages above for details.")
