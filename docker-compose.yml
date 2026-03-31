@@ -11,7 +11,7 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
     volumes:
-      - minio-data:/data
+      - ./minio-data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
@@ -61,21 +61,8 @@ services:
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
     command: label-studio start --username admin@example.com --password admin
     volumes:
-      - label-studio-data:/label-studio/data
+      - ./label-studio-data:/label-studio/data
     depends_on:
       - minio
     restart: unless-stopped
 
-volumes:
-  label-studio-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./label-studio-data
-  minio-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./minio-data 
