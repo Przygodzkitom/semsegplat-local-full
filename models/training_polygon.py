@@ -108,10 +108,12 @@ def save_model_config(model_filename, class_names, annotation_type="polygon", en
         print(f"❌ Error saving model config: {e}")
         return False
 
+loss_history = {'train_losses': [], 'val_losses': []}
+
 def update_progress(epoch, total_epochs, status="running", log_message=""):
     """Update progress file for external monitoring"""
     print(f"🔍 DEBUG: update_progress called - epoch={epoch}, total={total_epochs}, status={status}")
-    
+
     progress_data = {
         'current_epoch': epoch,
         'total_epochs': total_epochs,
@@ -120,7 +122,8 @@ def update_progress(epoch, total_epochs, status="running", log_message=""):
         'memory_usage': get_memory_usage(),
         'gpu_memory_usage': get_gpu_memory_usage(),
         'disk_usage': get_disk_usage(),
-        'annotation_type': 'polygon'
+        'annotation_type': 'polygon',
+        'loss_history': loss_history,
     }
     
     if log_message:
@@ -570,6 +573,13 @@ try:
         
         epoch_summary = f"Epoch {epoch+1}/{epochs} - Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f} (POLYGON)"
         print(epoch_summary)
+        loss_history['train_losses'].append(avg_train_loss)
+        loss_history['val_losses'].append(avg_val_loss)
+        try:
+            with open("/app/loss_history.json", 'w') as f:
+                json.dump(loss_history, f)
+        except Exception as e:
+            print(f"Warning: could not write loss_history.json: {e}")
         update_progress(epoch + 1, epochs, "running", epoch_summary)
         
         # No checkpoint saving during training - only save final model

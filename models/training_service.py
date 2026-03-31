@@ -168,12 +168,23 @@ class TrainingService:
     
     def detect_running_training(self):
         """Detect if there's a training process running and reconnect to it"""
+        # First check: if the progress file says the run is done, don't reconnect
+        if os.path.exists(self.progress_file):
+            try:
+                with open(self.progress_file) as f:
+                    data = json.load(f)
+                if data.get('status') in ('completed', 'failed', 'interrupted'):
+                    return False
+            except Exception:
+                pass
+
         try:
-            import subprocess
-            # Check for any training process (both polygon and brush)
-            result = subprocess.run(['pgrep', '-f', 'training'], capture_output=True, text=True)
+            # Use a specific pattern so we only match the actual training scripts
+            result = subprocess.run(
+                ['pgrep', '-f', r'training_(brush|polygon)\.py'],
+                capture_output=True, text=True
+            )
             if result.returncode == 0:
-                # There's a training process running
                 self.is_running = True
                 return True
         except Exception:
@@ -191,13 +202,7 @@ class TrainingService:
             if self.training_process.poll() is not None:
                 print(f"🔍 DEBUG: Training process has ended")
                 self.is_running = False
-                return {
-                    'status': 'completed' if self.training_process.returncode == 0 else 'failed',
-                    'progress': 0,
-                    'current_epoch': 0,
-                    'total_epochs': 100,
-                    'log': []
-                }
+                self.training_process = None  # clear so we fall through to progress file
             else:
                 print(f"🔍 DEBUG: Training process is still running")
         
@@ -209,12 +214,12 @@ class TrainingService:
                     progress_data = json.load(f)
                 print(f"🔍 DEBUG: Progress data: {progress_data}")
                 
-                # If the progress file shows 'running' status, we assume training is running
-                if progress_data.get('status') == 'running':
-                    print(f"🔍 DEBUG: Progress file shows running status, setting is_running=True")
+                status_val = progress_data.get('status')
+                if status_val in ('running', 'initializing', 'interrupted'):
+                    print(f"🔍 DEBUG: Progress file shows status={status_val}")
                     self.is_running = True
                     return progress_data
-                elif progress_data.get('status') in ['completed', 'failed']:
+                elif status_val in ('completed', 'failed'):
                     print(f"🔍 DEBUG: Progress file shows completed/failed status")
                     self.is_running = False
                     return progress_data

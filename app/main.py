@@ -219,8 +219,25 @@ def load_existing_images(bucket_name=None):
             st.warning(f"Could not load existing images: {str(e)}")
     return []
 
+def _render_loss_chart(train_losses, val_losses):
+    import matplotlib.pyplot as plt
+    fig, ax = plt.subplots(figsize=(8, 3))
+    epochs = range(1, len(train_losses) + 1)
+    ax.plot(epochs, train_losses, label='Train Loss', color='#f97316', linewidth=2)
+    if val_losses:
+        ax.plot(epochs, val_losses, label='Val Loss', color='#3b82f6', linewidth=2)
+    ax.set_xlabel('Epoch')
+    ax.set_ylabel('Loss')
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim(left=1)
+    plt.tight_layout()
+    st.pyplot(fig)
+    plt.close(fig)
+
+
 def main():
-    
+
     # Load existing project configuration on startup
     if 'label_studio_project_id' not in st.session_state:
         load_project_config()
@@ -707,6 +724,12 @@ def main():
                         st.session_state.training_running = True
                         st.session_state.training_log = []
                         st.session_state.current_epoch = 0
+                        st.session_state.pop('loss_history', None)
+                        try:
+                            import os as _os
+                            _os.remove("/app/loss_history.json")
+                        except FileNotFoundError:
+                            pass
                         st.success(message)
                         st.experimental_rerun()
                     else:
@@ -756,7 +779,22 @@ def main():
                 st.metric("GPU Memory", f"{gpu_memory_usage:.1f} MB")
             with col3:
                 st.metric("Disk Usage", f"{disk_usage:.1f}%")
-            
+
+            # Loss chart — read from dedicated file (written once per completed epoch)
+            try:
+                with open("/app/loss_history.json") as _lf:
+                    _lh = json.load(_lf)
+                train_losses = _lh.get('train_losses', [])
+                val_losses = _lh.get('val_losses', [])
+                if train_losses:
+                    st.session_state.loss_history = {'train_losses': train_losses, 'val_losses': val_losses}
+            except (FileNotFoundError, ValueError):
+                train_losses = []
+                val_losses = []
+            display = st.session_state.get('loss_history', {})
+            if display.get('train_losses'):
+                _render_loss_chart(display['train_losses'], display.get('val_losses', []))
+
             # Training log
             with st.expander(" Training Log", expanded=True):
                 log_placeholder = st.empty()
@@ -795,7 +833,13 @@ def main():
             if st.session_state.training_log and any(" Training complete!" in log for log in st.session_state.training_log):
                 st.success(" Training completed successfully!")
                 st.info("Check models/checkpoints/ for the final model.")
-                
+
+                saved_history = st.session_state.get('loss_history', {})
+                saved_train = saved_history.get('train_losses', [])
+                saved_val = saved_history.get('val_losses', [])
+                if saved_train:
+                    _render_loss_chart(saved_train, saved_val)
+
                 # Show final log
                 with st.expander(" Final Training Log", expanded=False):
                     st.text("\n".join(st.session_state.training_log[-50:]))
