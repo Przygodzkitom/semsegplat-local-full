@@ -323,7 +323,7 @@ class Inferencer(BaseSegmentation):
             col_idx = i % 3
             with cols[col_idx]:
                 class_name = self.class_names[i] if i < len(self.class_names) else f"Class {i}"
-                st.image(pred_masks[i] * 255, caption=f"{class_name}")
+                st.image((pred_masks[i] * 255).astype(np.uint8), caption=f"{class_name}")
         
         # Create GT overlay if provided
         overlayed_gt = None
@@ -345,7 +345,7 @@ class Inferencer(BaseSegmentation):
                 with gt_cols[col_idx]:
                     class_name = self.class_names[i] if i < len(self.class_names) else f"Class {i}"
                     gt_mask_class = (gt_mask == i).astype(np.uint8)
-                    st.image(gt_mask_class * 255, caption=f"GT {class_name}")
+                    st.image((gt_mask_class * 255).astype(np.uint8), caption=f"GT {class_name}")
         
         return overlayed, overlayed_gt
 

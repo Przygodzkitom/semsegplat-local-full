@@ -1115,7 +1115,8 @@ def main():
                 image = process_image(image_bytes)
 
                 pred_masks = inferencer.predict(image)
-                overlayed_pred, _ = inferencer.create_visualization(image, pred_masks)
+                image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+                overlayed_pred, _ = inferencer.create_visualization(image_rgb, pred_masks)
                 st.image(overlayed_pred, caption="Predicted Mask", use_column_width=True)
 
     elif st.session_state.current_step == "batch_analysis":
@@ -1286,7 +1287,7 @@ def main():
                         # Create overlay
                         overlay = create_analysis_overlay(
                             image_rgb, pred_masks,
-                            class_names, analysis,
+                            class_names,
                             min_object_area=min_area
                         )
 

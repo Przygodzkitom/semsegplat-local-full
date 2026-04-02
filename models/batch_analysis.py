@@ -81,18 +81,16 @@ def create_analysis_overlay(
     image: np.ndarray,
     pred_masks: List[np.ndarray],
     class_names: List[str],
-    analysis_result: Dict,
     alpha: float = 0.4,
     min_object_area: int = MIN_OBJECT_AREA
 ) -> np.ndarray:
     """
-    Create a visualization overlay with class masks, contours, and object labels.
+    Create a visualization overlay with colour masks only.
 
     Args:
         image: Original image in RGB format, shape (H, W, 3).
         pred_masks: List of binary masks from Inferencer.predict().
         class_names: Class name strings.
-        analysis_result: Output of analyze_single_image().
         alpha: Overlay transparency.
 
     Returns:
@@ -130,18 +128,6 @@ def create_analysis_overlay(
             color_layer = result.copy()
             color_layer[filtered_mask == 1] = color
             result = cv2.addWeighted(result, 1 - alpha, color_layer, alpha, 0)
-
-        class_data = analysis_result['classes'].get(class_name, {})
-        for obj in class_data.get('objects', []):
-            bbox = obj['bbox']
-            label_text = f"#{obj['id']} ({obj['area_percent']:.1f}%)"
-            text_x = bbox[1]
-            text_y = max(bbox[0] - 5, 15)
-            cv2.putText(
-                result, label_text,
-                (text_x, text_y),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA
-            )
 
     return result
 
