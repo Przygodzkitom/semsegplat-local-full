@@ -71,7 +71,7 @@ docker compose -f docker-compose.gpu.yml up -d
 ### start.sh / start.bat (Quick Start)
 **What it does:**
 - ✅ Creates required data directories automatically
-- ✅ Auto-detects GPU availability (start.sh only)
+- ✅ Auto-detects GPU via nvidia-smi (start.sh) / tries GPU first, falls back to CPU on failure (start.bat)
 - ✅ Starts containers immediately
 - ⚡ Fast startup for daily use
 
@@ -124,9 +124,9 @@ The container automatically detects GPU availability:
 - Change ports in `docker-compose.yml` if needed
 
 **MinIO connection failed:**
-- Verify `label-studio-key.json` is in project root
-- Check service account permissions
-- Ensure bucket exists and is accessible
+- Check MinIO is running: `docker compose ps`
+- Verify credentials in `.env` match `docker-compose.yml`
+- Ensure the `minio-data/` directory exists and is writable
 
 **Out of memory:**
 - Close other applications
@@ -146,7 +146,7 @@ The container automatically detects GPU availability:
 
 - Check logs: `docker compose logs -f semseg-app` (or `docker-compose logs -f semseg-app`)
 - Check GPU detection: Look at container logs for device information
-- See full documentation in `GPU_DETECTION_SETUP.md`
+- See full documentation in `DOCKER_SETUP.md`
 - For Docker setup issues, see `DOCKER_SETUP.md`
 
 ## ⏱️ Expected Times
