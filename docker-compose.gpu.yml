@@ -11,7 +11,7 @@ services:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
     volumes:
-      - minio-data:/data
+      - ./minio-data:/data
     command: server /data --console-address ":9001"
     restart: unless-stopped
 
@@ -22,15 +22,17 @@ services:
     ports:
       - "8501:8501"
     environment:
+      - LABEL_STUDIO_URL=http://label-studio:8080
+      - LABEL_STUDIO_USERNAME=${LABEL_STUDIO_USERNAME:-admin@example.com}
+      - LABEL_STUDIO_PASSWORD=${LABEL_STUDIO_PASSWORD:-admin}
+      - LABEL_STUDIO_PERSONAL_ACCESS_TOKEN=${LABEL_STUDIO_PERSONAL_ACCESS_TOKEN:-admin}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+      # MinIO configuration
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
-      - LABEL_STUDIO_URL=http://label-studio:8080
-      - LABEL_STUDIO_USERNAME=${LABEL_STUDIO_USERNAME:-admin@example.com}
-      - LABEL_STUDIO_PASSWORD=${LABEL_STUDIO_PASSWORD:-admin}
-      - NVIDIA_VISIBLE_DEVICES=all
-      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
     volumes:
       - ./models:/app/models
       - ./app:/app/app
@@ -49,25 +51,14 @@ services:
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
+      # MinIO configuration for Label Studio
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
     command: label-studio start --username admin@example.com --password admin
     volumes:
-      - label-studio-data:/label-studio/data
+      - ./label-studio-data:/label-studio/data
+    depends_on:
+      - minio
     restart: unless-stopped
-
-volumes:
-  label-studio-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./label-studio-data
-  minio-data:
-    driver: local
-    driver_opts:
-      type: none
-      o: bind
-      device: ./minio-data
