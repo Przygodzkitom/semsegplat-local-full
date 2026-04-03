@@ -22,7 +22,7 @@ This project follows Docker's core principle:
 
 ### 1. Clone the Repository
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/Przygodzkitom/semsegplat-local-full.git
 cd semsegplat-full_local_version
 ```
 
