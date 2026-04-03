@@ -26,7 +26,7 @@ git clone https://github.com/Przygodzkitom/semsegplat-local-full.git
 cd semsegplat-full_local_version
 ```
 
-### 2. Start the Platform (Choose One)
+### 2. Start the Platform
 
 **Option A: Quick Start (Recommended)**
 ```bash
@@ -38,14 +38,7 @@ chmod +x start.sh
 start.bat
 ```
 
-**Option B: Full Deployment (First-time setup)**
-```bash
-# Linux/macOS - Includes validation and health checks
-chmod +x deploy.sh
-./deploy.sh
-```
-
-**Option C: Manual Start**
+**Option B: Manual Start**
 ```bash
 # CPU-only or automatic GPU fallback
 docker compose up -d
@@ -79,20 +72,6 @@ docker compose -f docker-compose.gpu.yml up -d
 - Restarting after `docker compose down`
 - Daily development work
 - You want quick startup
-
-### deploy.sh (Full Deployment)
-**What it does:**
-- ✅ Checks Docker installation
-- ✅ Creates all directories (including redundant safety checks)
-- ✅ Starts MinIO first and waits for readiness
-- ✅ Tests connectivity to all services
-- ✅ Displays access URLs and credentials
-- ✅ Shows next steps and useful commands
-
-**Use when:**
-- First-time setup on a new machine
-- Troubleshooting deployment issues
-- You want comprehensive validation
 
 ### Data Directory Creation
 
