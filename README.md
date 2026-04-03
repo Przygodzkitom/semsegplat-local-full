@@ -25,33 +25,29 @@ This platform provides a complete workflow for semantic segmentation projects:
 
 ```bash
 # Clone the repository
-git clone <your-repo-url>
+git clone https://github.com/Przygodzkitom/semsegplat-local-full.git
 cd semsegplat-full_local_version
 ```
 
 ### Starting the Platform
 
-**Option 1: Quick Start (Recommended for daily use)**
+**Option 1: Quick Start (Recommended)**
 ```bash
 # Linux/Mac - Auto-detects GPU and creates directories
 chmod +x start.sh
 ./start.sh
 
-# Windows - Auto-detects GPU and creates directories
+# Windows - Tries GPU first, falls back to CPU
 start.bat
 ```
 
-**Option 2: Full Deployment (Recommended for first-time setup)**
+**Option 2: Manual Start**
 ```bash
-# Linux/Mac - Includes validation and health checks
-chmod +x deploy.sh
-./deploy.sh
-```
-
-**Option 3: Manual Start**
-```bash
-# Only if you prefer manual control
+# CPU-only or automatic GPU fallback
 docker compose up -d
+
+# Force GPU configuration (requires NVIDIA Docker)
+docker compose -f docker-compose.gpu.yml up -d
 ```
 
 ### Access the Platform
@@ -59,15 +55,6 @@ docker compose up -d
 - **Streamlit App**: http://localhost:8501
 - **Label Studio**: http://localhost:8080 (admin@example.com / admin)
 - **MinIO Console**: http://localhost:9001 (minioadmin / minioadmin123)
-
-### Script Comparison
-
-| Script | Best For | Features |
-|--------|----------|----------|
-| **start.sh/bat** | Daily use, quick restart | Auto-creates directories, GPU detection, fast startup |
-| **deploy.sh** | First-time setup, troubleshooting | Full validation, health checks, detailed output |
-
-Both scripts automatically create required data directories, so no manual setup is needed!
 
 ## 📁 Project Structure
 
@@ -85,11 +72,11 @@ semsegplat-full_local_version/
 │   └── utils/                    # Model utilities
 ├── docker/                       # Docker configuration
 │   └── Dockerfile                # Application Dockerfile
-├── docker-compose.yml            # Main Docker Compose
+├── docker-compose.yml            # Main Docker Compose (CPU / auto)
 ├── docker-compose.gpu.yml        # GPU-enabled Docker Compose
 ├── requirements.txt              # Python dependencies
-├── deploy.sh                     # Deployment script
-├── init_project.py               # Python deployment script
+├── start.sh                      # Linux/macOS startup script
+├── start.bat                     # Windows startup script
 └── README.md                     # This file
 ```
 
@@ -138,7 +125,7 @@ NVIDIA_VISIBLE_DEVICES=all
 1. Access Label Studio at `http://localhost:8080`
 2. Login with `admin@example.com` / `admin`
 3. Create a new project
-4. Configure storage settings (see `LABEL_STUDIO_MINIO_SETTINGS.md`)
+4. Configure storage settings
 
 #### 🚨 Critical Storage Configuration
 
@@ -193,7 +180,7 @@ All data is stored on your host machine using Docker bind mounts, ensuring data 
 - **Location**: `./label-studio-data/` (on host)
 - **Contains**: Database, project configs, user settings
 - **Container Path**: `/label-studio/data`
-- **Auto-created**: By start.sh/bat or deploy.sh
+- **Auto-created**: By start.sh / start.bat
 
 ### MinIO Data
 
@@ -201,14 +188,14 @@ All data is stored on your host machine using Docker bind mounts, ensuring data 
 - **Contains**: Images, annotations, model artifacts
 - **Container Path**: `/data`
 - **Access**: MinIO Console at `http://localhost:9001`
-- **Auto-created**: By start.sh/bat or deploy.sh
+- **Auto-created**: By start.sh / start.bat
 
 ### Model Checkpoints
 
 - **Location**: `./models/checkpoints/` (on host)
 - **Contains**: Trained models (.pth) and configs (_config.json)
 - **Container Path**: `/app/models/checkpoints`
-- **Auto-created**: By start.sh/bat or deploy.sh
+- **Auto-created**: By start.sh / start.bat
 
 ### Backup Recommendations
 
@@ -278,8 +265,7 @@ docker compose logs minio
 ### Common Issues
 
 1. **Label Studio projects not persisting**
-   - Check `LABEL_STUDIO_PERSISTENCE.md`
-   - Verify `label-studio-data/` directory exists
+   - Verify `label-studio-data/` directory exists and is writable
 
 2. **MinIO connection issues**
    - Ensure MinIO is running: `docker compose ps`
@@ -315,12 +301,8 @@ docker compose up -d minio
 
 ## 📚 Documentation
 
-- [Label Studio MinIO Settings](LABEL_STUDIO_MINIO_SETTINGS.md)
-- [Label Studio Persistence](LABEL_STUDIO_PERSISTENCE.md)
-- [MinIO Setup](MINIO_SETUP.md)
-- [GPU Detection Setup](GPU_DETECTION_SETUP.md)
-- [Dynamic Class Configuration](DYNAMIC_CLASS_CONFIGURATION.md)
-- [Inference Class Awareness](INFERENCE_CLASS_AWARENESS.md)
+- [Critical Fix Documentation](CRITICAL_FIX_DOCUMENTATION.md)
+- [Docker Setup](DOCKER_SETUP.md)
 
 ## 🤝 Contributing
 
@@ -349,4 +331,3 @@ For issues and questions:
 2. Review the documentation files
 3. Open an issue on GitHub
 4. Check service logs for detailed error messages
-
