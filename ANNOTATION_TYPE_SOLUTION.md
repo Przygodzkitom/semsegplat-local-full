@@ -50,7 +50,7 @@ The solution implements automatic annotation type detection and uses separate tr
 - **Features**:
   - Detects annotation type before training
   - Chooses correct training script automatically
-  - Provides fallback to original script if detection fails
+  - Raises an error if detection fails (no silent fallback)
   - Logs annotation type information
 
 ### 5. Enhanced Main Application (`app/main.py`)
@@ -85,7 +85,8 @@ if detection['type'] == 'polygon':
 elif detection['type'] == 'brush':
     training_script = "/app/models/training_brush.py"
 else:
-    training_script = "/app/models/training_brush.py"  # Default
+    training_script = "/app/models/training_brush.py"  # Mixed/unknown: default to brush
+    # Note: if detection itself fails, a RuntimeError is raised
 ```
 
 ### 3. Background Handling Differences
@@ -158,8 +159,7 @@ else:
 models/
 ├── training_polygon.py          # Polygon-specific training script
 ├── training_brush.py            # Brush-specific training script
-├── training.py                  # Original training script (fallback)
-├── training_service.py          # Updated service with auto-detection
+├── training_service.py          # Service with auto-detection and script selection
 └── utils/
     ├── annotation_type_detector.py  # Annotation type detection
     ├── brush_dataloader.py          # Brush-specific dataloader
