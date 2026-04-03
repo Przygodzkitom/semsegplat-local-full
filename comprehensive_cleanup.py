@@ -133,32 +133,29 @@ class ImprovedComprehensiveCleanup:
         
         return True
     
-    def clear_model_data(self, clear_checkpoints=False):
-        """Clear model data (optional)"""
+    def clear_model_data(self):
+        """Clear model data"""
         self.log("🤖 Clearing model data...")
-        
-        if clear_checkpoints:
-            # Clear model checkpoints
-            checkpoints_dir = "models/checkpoints"
-            if os.path.exists(checkpoints_dir):
-                try:
-                    shutil.rmtree(checkpoints_dir)
-                    os.makedirs(checkpoints_dir, exist_ok=True)
-                    self.log("✅ Cleared model checkpoints")
-                except Exception as e:
-                    self.log(f"⚠️ Error clearing checkpoints: {e}", "WARN")
-            
-            # Clear saved models
-            saved_models_dir = "models/saved_models"
-            if os.path.exists(saved_models_dir):
-                try:
-                    shutil.rmtree(saved_models_dir)
-                    os.makedirs(saved_models_dir, exist_ok=True)
-                    self.log("✅ Cleared saved models")
-                except Exception as e:
-                    self.log(f"⚠️ Error clearing saved models: {e}", "WARN")
-        else:
-            self.log("ℹ️ Preserving model checkpoints (use --clear-models to remove them)")
+
+        # Clear model checkpoints
+        checkpoints_dir = "models/checkpoints"
+        if os.path.exists(checkpoints_dir):
+            try:
+                shutil.rmtree(checkpoints_dir)
+                os.makedirs(checkpoints_dir, exist_ok=True)
+                self.log("✅ Cleared model checkpoints")
+            except Exception as e:
+                self.log(f"⚠️ Error clearing checkpoints: {e}", "WARN")
+
+        # Clear saved models
+        saved_models_dir = "models/saved_models"
+        if os.path.exists(saved_models_dir):
+            try:
+                shutil.rmtree(saved_models_dir)
+                os.makedirs(saved_models_dir, exist_ok=True)
+                self.log("✅ Cleared saved models")
+            except Exception as e:
+                self.log(f"⚠️ Error clearing saved models: {e}", "WARN")
 
         # Always clear brush cache (regenerated from annotations on next training)
         brush_cache_dir = "models/brush_cache"
@@ -342,20 +339,17 @@ class ImprovedComprehensiveCleanup:
             self.log("✅ Cleanup verification successful!")
             return True
     
-    def run_comprehensive_cleanup(self, clear_models=False):
+    def run_comprehensive_cleanup(self):
         """Run the complete cleanup process"""
-        self.log("🧹 Starting IMPROVED Comprehensive System Cleanup")
+        self.log("🧹 Starting Comprehensive System Cleanup")
         self.log("=" * 60)
         self.log("This will clear:")
         self.log("- Docker volumes completely")
         self.log("- Label Studio database and all data")
         self.log("- MinIO images and annotations")
+        self.log("- Model checkpoints and saved models")
         self.log("- All configuration files")
         self.log("- Debug and temporary files")
-        if clear_models:
-            self.log("- Model checkpoints and saved models")
-        else:
-            self.log("- Model checkpoints (preserved)")
         self.log("=" * 60)
         
         success = True
@@ -376,8 +370,8 @@ class ImprovedComprehensiveCleanup:
         if not self.clear_minio_data():
             success = False
         
-        # Step 5: Clear model data (optional)
-        self.clear_model_data(clear_models)
+        # Step 5: Clear model data
+        self.clear_model_data()
         
         # Step 6: Clear config files
         self.clear_config_files()
@@ -395,9 +389,9 @@ class ImprovedComprehensiveCleanup:
         
         # Final result
         if success:
-            self.log("🎉 IMPROVED cleanup completed successfully!")
-            self.log("✅ You now have a TRUE clean slate for new projects")
-            self.log("🔄 All Docker volumes, data, and configurations have been reset")
+            self.log("🎉 Cleanup completed successfully!")
+            self.log("✅ You now have a clean slate for new projects")
+            self.log("🔄 All Docker volumes, data, configurations, and models have been reset")
         else:
             self.log("⚠️ Cleanup completed with some issues", "WARN")
             self.log("Please check the logs above for any problems")
@@ -406,22 +400,19 @@ class ImprovedComprehensiveCleanup:
 
 def main():
     """Main function"""
-    print("🧹 IMPROVED Comprehensive System Cleanup Tool")
+    print("🧹 Comprehensive System Cleanup Tool")
     print("=" * 60)
     print("This will completely reset your system for a clean slate.")
-    print("All project data, images, annotations, configurations, and Docker volumes will be cleared.")
+    print("All project data, images, annotations, model checkpoints, and configurations will be cleared.")
     print()
-    
-    # Ask about model clearing
-    clear_models = input("Do you want to clear model checkpoints too? (y/N): ").lower() == 'y'
-    
+
     response = input("Are you sure you want to proceed? (y/N): ")
     if response.lower() != 'y':
         print("❌ Cleanup cancelled")
         return
-    
+
     cleanup = ImprovedComprehensiveCleanup()
-    success = cleanup.run_comprehensive_cleanup(clear_models)
+    success = cleanup.run_comprehensive_cleanup()
     
     if success:
         print("\n🎉 Cleanup successful! You can now start completely fresh.")
