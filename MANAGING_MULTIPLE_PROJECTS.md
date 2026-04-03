@@ -46,14 +46,11 @@ This gives you a clean slate. The old project folder is untouched.
 
 ```bash
 cd semsegplat-project-B
-rm -rf label-studio-data/*
-rm -rf minio-data/*
+rm -rf label-studio-data && mkdir label-studio-data
+rm -rf minio-data && mkdir minio-data
 ```
 
-> If `label-studio-data/` or `minio-data/` do not exist yet in the copy, create them:
-> ```bash
-> mkdir -p label-studio-data minio-data
-> ```
+> Note: using `rm -rf minio-data` (not `minio-data/*`) ensures the hidden `.minio.sys/` directory is also removed, so MinIO starts completely fresh.
 
 ### Step 3 — Change the ports in `docker-compose.yml` *(only if running instances simultaneously)*
 
