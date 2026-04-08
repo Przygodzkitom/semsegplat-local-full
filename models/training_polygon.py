@@ -451,11 +451,11 @@ optimizer = optim.Adam(model.parameters(), lr=1e-4)
 print("✅ Universal combined loss function ready!")
 
 # --- 6. Training Loop ---
-epochs = 100
+epochs = int(os.environ.get('NUM_EPOCHS', 100))
 os.makedirs("models/checkpoints", exist_ok=True)
 
 print("🚀 Starting POLYGON training...")
-update_progress(0, 100, "running", "Starting POLYGON training...")
+update_progress(0, epochs, "running", "Starting POLYGON training...")
 print(f"📊 Total epochs: {epochs}")
 print(f"📊 Training batches per epoch: {len(train_loader)}")
 print(f"📊 Validation batches per epoch: {len(val_loader)}")

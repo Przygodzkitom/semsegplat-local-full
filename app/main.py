@@ -681,6 +681,16 @@ def main():
                 st.session_state.training_running = True
                 st.info(" Detected running training process - reconnected!")
         
+        # Training configuration
+        num_epochs = st.number_input(
+            "Number of training epochs",
+            min_value=1,
+            max_value=10000,
+            value=100,
+            step=10,
+            disabled=st.session_state.training_running,
+        )
+
         # Training control buttons
         if not st.session_state.training_running:
             st.markdown("""
@@ -719,7 +729,7 @@ def main():
                     pass
             else:
                 if st.button(" Start Training", use_container_width=True):
-                    success, message = training_service.start_training()
+                    success, message = training_service.start_training(num_epochs=num_epochs)
                     if success:
                         st.session_state.training_running = True
                         st.session_state.training_log = []

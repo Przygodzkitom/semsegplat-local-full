@@ -24,11 +24,12 @@ class TrainingService:
         self.is_running = False
         self.bucket_name = bucket_name
         self.annotation_prefix = annotation_prefix
+        self.num_epochs = 100
         
     # Annotation type is configured directly in Label Studio
     # No need to read from config file
         
-    def start_training(self):
+    def start_training(self, num_epochs=100):
         """Start training in a separate process with proper isolation"""
         print(f"🔍 DEBUG: start_training() called with bucket_name='{self.bucket_name}', annotation_prefix='{self.annotation_prefix}'")
         
@@ -52,6 +53,8 @@ class TrainingService:
             # Set environment variables for bucket and prefix
             env['BUCKET_NAME'] = self.bucket_name
             env['ANNOTATION_PREFIX'] = self.annotation_prefix
+            env['NUM_EPOCHS'] = str(num_epochs)
+            self.num_epochs = num_epochs
 
             # Create test split before training (reserves images never seen by model)
             test_split_file = self._create_test_split_if_needed()
@@ -234,7 +237,7 @@ class TrainingService:
             'status': 'idle',
             'progress': 0,
             'current_epoch': 0,
-            'total_epochs': 100,
+            'total_epochs': self.num_epochs,
             'log': []
         }
     
