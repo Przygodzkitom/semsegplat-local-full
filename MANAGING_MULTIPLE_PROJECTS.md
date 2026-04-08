@@ -124,19 +124,70 @@ To stop all instances at once from Docker Desktop: go to the **Containers** tab 
 
 ---
 
-## Archiving or Backing Up a Project
+## Backing Up and Restoring a Project
 
-Because everything is in plain folders, a backup is simply a folder copy:
+### What to back up
+
+Three folders contain everything needed to fully restore a project:
+
+| Folder | Contains |
+|---|---|
+| `minio-data/` | All uploaded images and exported annotation masks |
+| `label-studio-data/` | Label Studio database (tasks, annotations, project settings) |
+| `models/checkpoints/` | Trained model weights (`.pth`) and their config files (`.json`) |
+
+Everything else (app code, Dockerfiles, compose files) is in git and does not need to be backed up separately.
+
+### Creating a backup
+
+Copy the three folders while the stack is stopped to avoid partial writes:
 
 ```bash
-cp -r semsegplat-project-B semsegplat-project-B-backup-2024-01
+cd semsegplat-project-A
+docker compose down
+
+cp -r minio-data       ../backup-project-A/minio-data
+cp -r label-studio-data ../backup-project-A/label-studio-data
+cp -r models/checkpoints ../backup-project-A/checkpoints
 ```
 
-Or compress it:
+Or back up the entire project folder at once (simplest):
 
 ```bash
-tar -czf project-B-backup.tar.gz semsegplat-project-B/
+cp -r semsegplat-project-A semsegplat-project-A-backup-$(date +%Y-%m-%d)
 ```
+
+Or as a compressed archive:
+
+```bash
+tar -czf project-A-backup-$(date +%Y-%m-%d).tar.gz semsegplat-project-A/
+```
+
+### Restoring from a backup
+
+1. Clone or copy the app folder (code only, no data):
+
+   ```bash
+   cp -r semsegplat-full_local_version semsegplat-restored
+   cd semsegplat-restored
+   ```
+
+2. Remove the empty data folders created by the copy, then replace them with your backups:
+
+   ```bash
+   rm -rf minio-data label-studio-data models/checkpoints
+   cp -r ../backup-project-A/minio-data        ./minio-data
+   cp -r ../backup-project-A/label-studio-data ./label-studio-data
+   cp -r ../backup-project-A/checkpoints       ./models/checkpoints
+   ```
+
+3. Start the stack:
+
+   ```bash
+   docker compose up -d
+   ```
+
+All images, annotations, and trained models will be accessible through the GUI immediately — no re-import needed.
 
 ---
 
