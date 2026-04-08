@@ -16,6 +16,7 @@ services:
     restart: unless-stopped
 
   semseg-app:
+    image: semseg-app:latest
     build:
       context: .
       dockerfile: docker/Dockerfile
