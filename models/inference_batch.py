@@ -417,7 +417,7 @@ def batch_evaluate_with_minio_annotations(bucket_name="segmentation-platform", m
                 print(f"Processing image {i+1}/{len(image_annotation_pairs)}: {os.path.basename(image_path)}")
                 
                 # Run inference using predict_and_compare (like the old working version)
-                pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask, iou_threshold=0.1)
+                pred_mask, ious, metrics = inferencer.predict_and_compare(image, gt_mask, iou_threshold=0.5)
                 
                 print(f"  ✅ Inference complete: IoU={ious}")
                 
@@ -730,7 +730,7 @@ def batch_evaluate_with_labelstudio_export(export_file_path, model_path, bucket_
                 print(f"Skipping {img_key}: missing image or annotation.")
                 continue
 
-            pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.1)
+            pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.5)
             
             all_ious.append(ious)
             all_metrics.append(metrics)
@@ -838,7 +838,7 @@ def batch_evaluate(image_dir, mask_dir, model_path, num_classes=None, threshold=
             print(f"Skipping {img_name}: missing image or mask.")
             continue
 
-        pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.1)
+        pred_mask, ious, metrics = inferencer.predict_and_compare(img, gt_mask, iou_threshold=0.5)
         all_ious.append(ious)
         all_metrics.append(metrics)
 

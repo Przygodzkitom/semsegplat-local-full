@@ -48,7 +48,7 @@ def iou_coef(pred_obj, gt_obj):
     union = np.logical_or(pred_obj, gt_obj).sum()
     return intersection / (union + 1e-6)
 
-def compute_objectwise_metrics(pred_mask, gt_mask, iou_threshold=0.1):
+def compute_objectwise_metrics(pred_mask, gt_mask, iou_threshold=0.5):
     """Compute true object-wise metrics using connected component analysis and IoU matching.
 
     Each connected component in pred and GT is treated as an individual object.
@@ -376,7 +376,7 @@ class Inferencer(BaseSegmentation):
             'overlayed_gt': overlayed_gt
         }
 
-    def predict_and_compare(self, image, gt_mask, iou_threshold=0.1):
+    def predict_and_compare(self, image, gt_mask, iou_threshold=0.5):
         """Predict masks and compare with ground truth"""
         print(f"  predict_and_compare: image {image.shape}, gt {gt_mask.shape}, iou_threshold={iou_threshold}")
         
