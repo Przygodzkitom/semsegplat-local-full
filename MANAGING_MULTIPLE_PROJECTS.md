@@ -187,6 +187,8 @@ tar -czf project-A-backup-$(date +%Y-%m-%d).tar.gz semsegplat-project-A/
    docker compose up -d
    ```
 
+> **Important — order matters:** always copy the data folders *before* running `docker compose up`. If Label Studio starts against an empty `label-studio-data/` folder it will initialise a fresh database, overwriting any file you copy in afterwards. If this happens: stop the stack (`docker compose down`), replace `label-studio-data/` with your backup again, then restart.
+
 All images, annotations, and trained models will be accessible through the GUI immediately — no re-import needed.
 
 ---
