@@ -56,10 +56,10 @@ def configure_resource_limits():
 def save_project_config(project_id, project_name, project_description=""):
     """Save project configuration to persistent storage"""
     try:
-        # Save to local config directory (consistent location)
-        config_dir = Path("config")
+        # Save to label-studio-data so it persists via bind mount
+        config_dir = Path("label-studio-data")
         config_dir.mkdir(exist_ok=True)
-        
+
         config_file = config_dir / "label_studio_project.json"
         config_data = {
             "project_id": project_id,
@@ -82,7 +82,7 @@ def load_project_config():
     """Load project configuration from persistent storage"""
     try:
         # Load from local config directory (consistent location)
-        config_file = Path("config") / "label_studio_project.json"
+        config_file = Path("label-studio-data") / "label_studio_project.json"
         
         if config_file.exists():
             with open(config_file, 'r') as f:
