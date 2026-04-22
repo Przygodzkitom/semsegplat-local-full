@@ -25,7 +25,7 @@ class TrainingService:
         self.bucket_name = bucket_name
         self.annotation_prefix = annotation_prefix
         self.num_epochs = 100
-        
+
     # Annotation type is configured directly in Label Studio
     # No need to read from config file
         
@@ -326,22 +326,11 @@ class TrainingService:
             print(f"Error appending to log: {e}")
     
     def _create_test_split_if_needed(self):
-        """Reserve 20% of annotated images as a held-out test set before training.
+        """Reserve 10% of annotated images (at least 1) as a held-out test set before training.
 
-        If the file already exists the same split is reused across training runs,
-        so test images are never seen by the model.
+        A fresh split is created on every training run to include any newly added annotations.
         """
         test_split_file = "/app/models/checkpoints/test_split.json"
-
-        if os.path.exists(test_split_file):
-            try:
-                with open(test_split_file) as f:
-                    existing = json.load(f)
-                n_test = len(existing.get('test_image_keys', []))
-                print(f"✅ Existing test split loaded: {n_test} images reserved for evaluation")
-                return test_split_file
-            except Exception as e:
-                print(f"⚠️ Could not read existing test split ({e}), recreating")
 
         print("🔍 Creating test split from annotated images...")
         try:
@@ -392,7 +381,7 @@ class TrainingService:
                 print("⚠️ No image keys found, skipping test split creation")
                 return None
 
-            n_test = max(1, int(len(image_keys) * 0.2))
+            n_test = max(1, int(len(image_keys) * 0.1))
             random.shuffle(image_keys)
             test_keys = image_keys[:n_test]
 
