@@ -34,12 +34,19 @@ fi
 # Check if NVIDIA Docker runtime is available
 echo "🔍 Checking for NVIDIA Docker runtime..."
 
-if docker run --rm --gpus all nvidia/cuda:11.8-base-ubuntu20.04 nvidia-smi > /dev/null 2>&1; then
+if docker info 2>/dev/null | grep -i "Runtimes" | grep -q "nvidia"; then
     echo "✅ NVIDIA Docker runtime detected!"
     echo "🚀 Starting with GPU acceleration..."
-    echo "   Using: $DOCKER_COMPOSE -f docker-compose.gpu.yml up"
-    echo ""
-    $DOCKER_COMPOSE -f docker-compose.gpu.yml up
+    # Prefer docker-compose (V1) — it correctly honors "runtime: nvidia"
+    if command -v docker-compose &> /dev/null; then
+        echo "   Using: docker-compose -f docker-compose.gpu.yml up"
+        echo ""
+        docker-compose -f docker-compose.gpu.yml up
+    else
+        echo "   Using: $DOCKER_COMPOSE -f docker-compose.gpu.yml up"
+        echo ""
+        $DOCKER_COMPOSE -f docker-compose.gpu.yml up
+    fi
 else
     echo "ℹ️  NVIDIA Docker runtime not available"
     echo "🔄 Starting with CPU fallback (GPU will be detected at runtime if available)..."

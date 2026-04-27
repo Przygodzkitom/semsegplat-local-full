@@ -15,11 +15,11 @@ echo.
 
 echo 🔍 Starting with GPU configuration...
 
-REM Try GPU configuration first
-docker compose -f docker-compose.gpu.yml up
+REM Try legacy docker-compose first for GPU — it correctly honors "runtime: nvidia"
+docker-compose -f docker-compose.gpu.yml up
 if %errorlevel% neq 0 (
-    echo ⚠️  GPU configuration failed, trying legacy docker-compose
-    docker-compose -f docker-compose.gpu.yml up
+    echo ⚠️  Legacy docker-compose not available, trying modern docker compose...
+    docker compose -f docker-compose.gpu.yml up
     if %errorlevel% neq 0 (
         echo ⚠️  GPU configuration failed, falling back to CPU
         echo 🔄 Starting with CPU configuration
