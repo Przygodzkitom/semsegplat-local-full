@@ -156,8 +156,10 @@ semseg-platform/
 ├── minio-data/              ← MinIO object storage
 ├── label-studio-data/       ← Label Studio database and projects
 └── models/
-    └── checkpoints/         ← trained model files
+    └── checkpoints/         ← trained model checkpoints (persisted on host)
 ```
+
+The application source code lives inside the image. Only the `checkpoints/` subfolder is mounted from your machine so trained models survive container updates.
 
 ### Manual start (without the scripts)
 

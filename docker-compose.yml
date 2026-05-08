@@ -30,7 +30,7 @@ services:
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
     volumes:
-      - ./models:/app/models
+      - ./models/checkpoints:/app/models/checkpoints
       - ./label-studio-data:/app/label-studio-data
     depends_on:
       - label-studio
