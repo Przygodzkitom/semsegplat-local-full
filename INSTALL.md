@@ -40,11 +40,19 @@ docker --version
 docker compose version
 ```
 
-To run Docker without `sudo`, add yourself to the `docker` group and log out/in:
+**Required — add your user to the `docker` group:**
 
 ```bash
 sudo usermod -aG docker $USER
 ```
+
+Then log out and log back in (or run `newgrp docker` in the current terminal). This is mandatory — without it every `docker` command fails with a "permission denied" error on `/var/run/docker.sock`. Verify the fix worked before continuing:
+
+```bash
+docker ps
+```
+
+If that prints a table (even an empty one) without an error, you are ready to proceed.
 
 ### macOS
 
@@ -257,6 +265,17 @@ docker compose logs minio           # Storage logs
 ```
 
 ### Common issues
+
+**"permission denied" on /var/run/docker.sock (Linux)**
+
+Your user is not in the `docker` group. Run:
+
+```bash
+sudo usermod -aG docker $USER
+newgrp docker   # applies immediately in the current terminal
+```
+
+Then retry. If `newgrp docker` is not enough (e.g. the script was launched from a file manager), log out and back in fully.
 
 **Port already in use**
 
