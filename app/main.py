@@ -390,6 +390,12 @@ def main():
             project_id = st.session_state.label_studio_project_id
             project_name = st.session_state.get('label_studio_project_name', 'Unknown')
             
+            st.info(
+                "**Label Studio login** — when prompted, sign in with:\n\n"
+                "- **Email:** `admin@example.com`\n"
+                "- **Password:** `admin`\n\n"
+                "You only need to do this once per browser session."
+            )
             st.markdown(
                 f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank">'
                 '<button style="background-color:#FF4B4B;color:white;border:none;padding:0.5em 1em;'
@@ -526,6 +532,12 @@ def main():
                             st.warning(f"Could not save class config: {e}")
 
                         st.success(f"Project setup complete! Project ID: {project_id}")
+                        st.info(
+                            "**Label Studio login** — when prompted, sign in with:\n\n"
+                            "- **Email:** `admin@example.com`\n"
+                            "- **Password:** `admin`\n\n"
+                            "You only need to do this once per browser session."
+                        )
                         st.markdown(
                             f'<a href="http://localhost:8080/projects/{project_id}/data" target="_blank">'
                             '<button style="background-color:#FF4B4B;color:white;border:none;padding:0.5em 1em;'
