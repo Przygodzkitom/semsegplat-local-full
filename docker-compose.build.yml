@@ -1,0 +1,13 @@
+version: '3.8'
+
+# Dev/build override — use with: docker compose -f docker-compose.yml -f docker-compose.build.yml up
+# Builds the semseg-app image locally instead of pulling from the registry.
+# Add -f docker-compose.gpu.yml as a third -f argument to also enable GPU.
+services:
+  semseg-app:
+    image: semseg-app:latest
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    volumes:
+      - ./app:/app/app

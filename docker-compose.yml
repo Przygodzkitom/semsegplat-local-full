@@ -1,12 +1,11 @@
 version: '3.8'
 
 services:
-  # MinIO S3-compatible storage
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     ports:
-      - "9000:9000"  # API port
-      - "9001:9001"  # Console port
+      - "9000:9000"
+      - "9001:9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
@@ -16,10 +15,7 @@ services:
     restart: unless-stopped
 
   semseg-app:
-    image: semseg-app:latest
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
+    image: ghcr.io/przygodzkitom/semseg-app:latest
     ports:
       - "8501:8501"
     environment:
@@ -29,20 +25,13 @@ services:
       - LABEL_STUDIO_PERSONAL_ACCESS_TOKEN=${LABEL_STUDIO_PERSONAL_ACCESS_TOKEN:-admin}
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=compute,utility
-      # MinIO configuration
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
       - MINIO_BUCKET_NAME=${MINIO_BUCKET_NAME:-segmentation-platform}
     volumes:
       - ./models:/app/models
-      - ./app:/app/app
       - ./label-studio-data:/app/label-studio-data
-    # GPU passthrough - conditional runtime configuration
-    # Uncomment the line below ONLY if you have NVIDIA Docker runtime installed
-    # and want to use GPU acceleration. The app will automatically detect GPU
-    # availability and fall back to CPU if no GPU is available.
-    # runtime: nvidia  # Enable GPU passthrough (optional)
     depends_on:
       - label-studio
       - minio
@@ -55,7 +44,6 @@ services:
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data
-      # MinIO configuration for Label Studio
       - MINIO_ENDPOINT=http://minio:9000
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin123
@@ -66,4 +54,3 @@ services:
     depends_on:
       - minio
     restart: unless-stopped
-
