@@ -26,7 +26,7 @@ The platform uses three services orchestrated by Docker Compose:
 
 Because data is stored in local folders, a new independent project = a **separate copy of the whole app folder** with fresh (empty) data directories and different network ports.
 
-Docker Desktop alone is not sufficient for this — it can start and stop existing stacks but cannot launch a second independent copy of a `docker-compose.yml` from a different folder. A terminal is required for the steps below.
+A terminal is required for the initial setup steps below (copying the folder, clearing data directories). Once a project stack has been set up, Docker Desktop can be used to stop and start it alongside any other project stacks.
 
 ---
 
