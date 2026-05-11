@@ -132,17 +132,21 @@ On the first run Docker pulls all three images from the registry. This is a one-
 
 The startup scripts create the required data directories automatically, detect whether you have an NVIDIA GPU, and launch the correct compose configuration.
 
+> **Before running:** Make sure Docker is running. On Windows and macOS, open Docker Desktop and wait for the whale icon in the taskbar/menu bar to stop animating. On Linux, verify with `docker ps` — if it errors, run `sudo systemctl start docker`.
+
 **Linux / macOS:**
 
 ```bash
 ./start.sh
 ```
 
-**Windows:**
+**Windows (PowerShell):**
 
-```bat
-start.bat
+```powershell
+.\start.bat
 ```
+
+> **Note:** In PowerShell you must prefix with `.\`. Running `start.bat` alone invokes the Windows `start` command instead of the script.
 
 The script prints which configuration it selected (GPU or CPU) and starts the containers in the foreground so you can watch the log output directly. After the first run you can also use it for daily restarts — it is safe to run repeatedly.
 
@@ -219,7 +223,7 @@ docker compose down
 
 # Restart — using the script (recommended, auto-detects GPU)
 ./start.sh        # Linux / macOS
-start.bat         # Windows
+.\start.bat       # Windows (PowerShell)
 
 # Restart — manually
 docker compose up -d                                                   # CPU
