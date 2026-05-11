@@ -35,6 +35,9 @@ See [INSTALL.md](INSTALL.md) for the full guide. You do **not** need to clone th
    ```
 
 3. Start the platform:
+
+   > **Before running:** Make sure Docker is running. On Windows and macOS, open Docker Desktop and wait for the whale icon in the taskbar/menu bar to stop animating. On Linux, verify with `docker ps` — if it errors, run `sudo systemctl start docker`.
+
    ```bash
    ./start.sh      # Linux / macOS
    .\start.bat     # Windows (PowerShell — note the .\)
