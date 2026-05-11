@@ -194,7 +194,7 @@ Wait until you see Label Studio print something like `Starting web server...` an
 
 ---
 
-## Step 6 — Open the applications
+## Step 5 — Open the applications
 
 | Application | URL | Default credentials |
 |---|---|---|
