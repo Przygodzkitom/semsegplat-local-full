@@ -221,7 +221,7 @@ class Inferencer(BaseSegmentation):
                 test_model = smp.Unet(encoder_name, classes=self.num_classes, activation=None, encoder_weights=encoder_weights)
                 
                 # Try to load the state dict with strict=False to check compatibility
-                state_dict = torch.load(model_path, map_location=self.device)
+                state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
                 missing_keys, unexpected_keys = test_model.load_state_dict(state_dict, strict=False)
                 
                 # If we have very few missing keys, this is probably the right combination

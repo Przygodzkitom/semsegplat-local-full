@@ -206,6 +206,36 @@ docker compose exec semseg-app bash
 3. Make your changes and add tests if applicable
 4. Submit a pull request
 
+## Security considerations for hosting
+
+This platform is designed for **local use only**. If you intend to host it on a server or expose it to a network beyond your own machine, be aware of the following before doing so:
+
+### Default credentials are public
+
+The default credentials for MinIO and Label Studio are hardcoded in `docker-compose.yml` and visible in this public repository:
+
+| Service | Default username | Default password |
+|---|---|---|
+| MinIO | `minioadmin` | `minioadmin123` |
+| Label Studio | `admin@example.com` | `admin` |
+
+Anyone who has read this repository knows these values. Before exposing the platform to a network, change all credentials in `docker-compose.yml` to strong unique values.
+
+### Ports to protect
+
+If hosted on a server, the following ports must be firewalled or placed behind authentication:
+
+| Port | Service |
+|---|---|
+| 8501 | Streamlit UI |
+| 8080 | Label Studio |
+| 9000 | MinIO S3 API |
+| 9001 | MinIO admin console |
+
+### Model checkpoints from untrusted sources
+
+PyTorch model files (`.pth`) can execute arbitrary code when loaded. Only load checkpoints from sources you trust.
+
 ## License
 
 MIT — see [LICENSE.md](LICENSE.md).
