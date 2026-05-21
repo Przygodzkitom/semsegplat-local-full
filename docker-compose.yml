@@ -4,8 +4,8 @@ services:
   minio:
     image: minio/minio:RELEASE.2025-09-07T16-13-09Z
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin123
@@ -17,7 +17,7 @@ services:
   semseg-app:
     image: ghcr.io/przygodzkitom/semseg-app:latest
     ports:
-      - "8501:8501"
+      - "127.0.0.1:8501:8501"
     environment:
       - LABEL_STUDIO_URL=http://label-studio:8080
       - LABEL_STUDIO_USERNAME=${LABEL_STUDIO_USERNAME:-admin@example.com}
@@ -40,7 +40,7 @@ services:
   label-studio:
     image: heartexlabs/label-studio:1.20.0
     ports:
-      - "8080:8080"
+      - "127.0.0.1:8080:8080"
     environment:
       - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
       - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/data

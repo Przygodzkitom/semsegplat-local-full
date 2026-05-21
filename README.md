@@ -221,7 +221,13 @@ The default credentials for MinIO and Label Studio are hardcoded in `docker-comp
 
 Anyone who has read this repository knows these values. Before exposing the platform to a network, change all credentials in `docker-compose.yml` to strong unique values.
 
-### Ports to protect
+### Port binding
+
+All ports are bound to `127.0.0.1` (localhost only), meaning they are reachable only from the machine running the platform — not from other devices on the same network. This protects you on public or shared wifi where other devices could otherwise reach your data.
+
+If you ever need to expose the platform to other devices on your local network, you would need to change the port bindings in `docker-compose.yml` from `127.0.0.1:8501:8501` to `8501:8501` — but be aware of the security implications of doing so.
+
+### Ports to protect if hosting on a server
 
 If hosted on a server, the following ports must be firewalled or placed behind authentication:
 
