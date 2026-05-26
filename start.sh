@@ -11,6 +11,15 @@ echo "📁 Ensuring directory structure..."
 mkdir -p label-studio-data
 mkdir -p minio-data
 mkdir -p models/checkpoints
+
+# On Linux with Docker Engine (not Docker Desktop), bind-mounted directories
+# keep their host ownership. Label Studio runs as UID 1001 inside the container
+# and will fail with PermissionError if it cannot write to the data directory.
+# chmod a+rwX is harmless on Docker Desktop (where this is never an issue).
+if [[ "$(uname -s)" == "Linux" ]]; then
+    chmod a+rwX label-studio-data
+fi
+
 echo "✅ Directory structure ready"
 echo ""
 

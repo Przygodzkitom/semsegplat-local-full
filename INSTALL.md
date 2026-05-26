@@ -311,6 +311,22 @@ docker compose up -d
 
 The app detects GPU availability at runtime and falls back to CPU automatically.
 
+**Label Studio fails to start with `PermissionError: [Errno 13] Permission denied: '/label-studio/data/media'` (Linux Docker Engine)**
+
+This happens on Linux when running Docker Engine directly (without Docker Desktop). The `label-studio-data/` directory on the host is owned by your user, but inside the container Label Studio runs as UID 1001 and cannot write to it.
+
+If you used `start.sh` to launch the platform, re-run it — the script now sets the correct permissions automatically. If you created the directory manually or the error persists, fix it once with:
+
+```bash
+chmod a+rwX label-studio-data
+```
+
+Then restart Label Studio:
+
+```bash
+docker compose restart label-studio
+```
+
 **Label Studio shows blank page or 502**
 
 The database is still initialising. Wait 60 seconds and refresh.
